@@ -21,6 +21,24 @@ class BedrockConfig {
     this.sessionToken,
   });
 
+  factory BedrockConfig.sanitized({
+    required String region,
+    required String modelId,
+    required String accessKeyId,
+    required String secretAccessKey,
+    String? sessionToken,
+  }) {
+    return BedrockConfig(
+      region: region.trim(),
+      modelId: modelId.trim(),
+      accessKeyId: accessKeyId.trim(),
+      secretAccessKey: secretAccessKey.trim(),
+      sessionToken: sessionToken?.trim().isEmpty == true
+          ? null
+          : sessionToken?.trim(),
+    );
+  }
+
   bool get isConfigured =>
       region.isNotEmpty &&
       modelId.isNotEmpty &&
@@ -40,7 +58,7 @@ class BedrockConfig {
     final sessionFromDefine = define('AWS_SESSION_TOKEN');
     final sessionFromEnv = EnvConfig.get('AWS_SESSION_TOKEN');
 
-    return BedrockConfig(
+    return BedrockConfig.sanitized(
       region: pick('AWS_REGION', 'AWS_REGION', 'us-east-1'),
       modelId: pick(
         'BEDROCK_MODEL_ID',
@@ -48,7 +66,11 @@ class BedrockConfig {
         'anthropic.claude-3-5-sonnet-20240620-v2:0',
       ),
       accessKeyId: pick('AWS_ACCESS_KEY_ID', 'AWS_ACCESS_KEY_ID', ''),
-      secretAccessKey: pick('AWS_SECRET_ACCESS_KEY', 'AWS_SECRET_ACCESS_KEY', ''),
+      secretAccessKey: pick(
+        'AWS_SECRET_ACCESS_KEY',
+        'AWS_SECRET_ACCESS_KEY',
+        '',
+      ),
       sessionToken: sessionFromDefine.isNotEmpty
           ? sessionFromDefine
           : sessionFromEnv,
@@ -62,14 +84,11 @@ class BedrockClient {
 
   final BedrockConfig config;
 
-  static String _encodeModelPath(String modelId) =>
-      modelId.replaceAll(':', '%3A');
-
+  /// Model id stays raw in the URL path (`:0`). Signer encodes once for SigV4.
   Uri _converseUri() {
-    final encodedModel = _encodeModelPath(config.modelId);
-    return Uri.https(
-      'bedrock-runtime.${config.region}.amazonaws.com',
-      '/model/$encodedModel/converse',
+    return Uri.parse(
+      'https://bedrock-runtime.${config.region}.amazonaws.com'
+      '/model/${config.modelId}/converse',
     );
   }
 
@@ -94,8 +113,7 @@ class BedrockClient {
   }) async {
     if (!config.isConfigured) {
       throw Exception(
-        'AWS Bedrock is not configured. Set credentials in Settings or '
-        'pass --dart-define=AWS_ACCESS_KEY_ID=... --dart-define=AWS_SECRET_ACCESS_KEY=...',
+        'AWS Bedrock is not configured. Import .env in Settings or set keys.',
       );
     }
 

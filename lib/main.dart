@@ -12,6 +12,7 @@ import 'config/env_config.dart';
 import 'services/api_service.dart';
 import 'services/bedrock_client.dart';
 import 'utils/desktop_file_helper.dart';
+import 'utils/vault_access.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -67,10 +68,6 @@ class _MainScreenState extends State<MainScreen> {
   // 1. STATE VARIABLES & CONTROLLERS
   // =========================================================================
   String vaultPath = '';
-  String bedrockRegion = 'us-east-1';
-  String bedrockModelId = 'anthropic.claude-3-5-sonnet-20240620-v2:0';
-  String awsAccessKeyId = '';
-  String awsSecretAccessKey = '';
   http.Client? _client;
   File? selectedPdf;
   bool isLoading = false;
@@ -130,49 +127,23 @@ class _MainScreenState extends State<MainScreen> {
   }
 
   void _initResearchApiService() {
-    final envDefaults = BedrockConfig.fromEnvironment();
     researchApiService = ResearchApiService(
       grobidUrl: 'http://localhost:8070',
-      bedrockClient: BedrockClient(
-        config: BedrockConfig(
-          region: bedrockRegion.isNotEmpty ? bedrockRegion : envDefaults.region,
-          modelId: bedrockModelId.isNotEmpty ? bedrockModelId : envDefaults.modelId,
-          accessKeyId:
-              awsAccessKeyId.isNotEmpty ? awsAccessKeyId : envDefaults.accessKeyId,
-          secretAccessKey: awsSecretAccessKey.isNotEmpty
-              ? awsSecretAccessKey
-              : envDefaults.secretAccessKey,
-        ),
-      ),
+      bedrockClient: BedrockClient(config: BedrockConfig.fromEnvironment()),
     );
   }
 
   Future<void> _loadSettings() async {
     final prefs = await SharedPreferences.getInstance();
-    final envDefaults = BedrockConfig.fromEnvironment();
     setState(() {
       vaultPath = prefs.getString('vaultPath') ?? '';
-      bedrockRegion =
-          prefs.getString('bedrockRegion') ?? envDefaults.region;
-      bedrockModelId =
-          prefs.getString('bedrockModelId') ?? envDefaults.modelId;
-      awsAccessKeyId =
-          prefs.getString('awsAccessKeyId') ?? envDefaults.accessKeyId;
-      awsSecretAccessKey =
-          prefs.getString('awsSecretAccessKey') ?? envDefaults.secretAccessKey;
     });
-    _initResearchApiService();
-    _loadVaultLibrary(); // Tự động quét thư viện khi mở app
+    _loadVaultLibrary();
   }
 
   Future<void> _saveSettings() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('vaultPath', vaultPath);
-    await prefs.setString('bedrockRegion', bedrockRegion);
-    await prefs.setString('bedrockModelId', bedrockModelId);
-    await prefs.setString('awsAccessKeyId', awsAccessKeyId);
-    await prefs.setString('awsSecretAccessKey', awsSecretAccessKey);
-    _initResearchApiService();
     _loadVaultLibrary();
     ScaffoldMessenger.of(
       context,
@@ -411,6 +382,13 @@ class _MainScreenState extends State<MainScreen> {
         grobidData = {'title': '', 'authors': '', 'year': ''};
       }
 
+      final grobidTitle = grobidData['title']?.toString().trim() ?? '';
+      if (grobidTitle.isEmpty && selectedPdf != null) {
+        final fallbackTitle = p.basenameWithoutExtension(selectedPdf!.path);
+        grobidData['title'] = fallbackTitle;
+        _addLog('ℹ️ Using PDF filename as title: $fallbackTitle');
+      }
+
       if (!mounted || _isCancelled) return;
 
       // --- STEP 3: OPENALEX ---
@@ -589,12 +567,61 @@ class _MainScreenState extends State<MainScreen> {
     }
   }
 
+  Future<bool> _ensureVaultReady() async {
+    if (selectedPdf == null) {
+      _showUserMessage('Select a PDF first.', isError: true);
+      return false;
+    }
+    if (vaultPath.trim().isEmpty) {
+      _showUserMessage(
+        'Set your Obsidian vault in Settings → Browse (required on macOS).',
+        isError: true,
+      );
+      _showSettingsDialog(context);
+      return false;
+    }
+    final vaultDir = Directory(vaultPath);
+    if (!await vaultDir.exists()) {
+      _showUserMessage(
+        'Vault folder not found. Use Settings → Browse to select it again.',
+        isError: true,
+      );
+      return false;
+    }
+
+    if (await VaultAccess.canWriteToVault(vaultPath)) return true;
+
+    if (VaultAccess.requiresPickerGrant) {
+      _showUserMessage(
+        'macOS blocked vault access. Please select the vault folder again.',
+        isError: true,
+      );
+      final picked = await VaultAccess.pickVaultWithWriteAccess(
+        initialDirectory: vaultPath,
+      );
+      if (picked == null || picked.isEmpty) return false;
+      setState(() => vaultPath = picked);
+      await _saveSettings();
+      if (await VaultAccess.canWriteToVault(vaultPath)) return true;
+    }
+
+    _showUserMessage(
+      'Cannot write to vault. On macOS you must use Browse in Settings — typing the path is not enough.',
+      isError: true,
+    );
+    return false;
+  }
+
   Future<void> _saveToObsidian() async {
-    if (vaultPath.isEmpty || selectedPdf == null) return;
+    if (!await _ensureVaultReady()) return;
+
+    setState(() => isLoading = true);
     try {
-      final paperDirPath = p.join(vaultPath, "Papers");
+      final paperDirPath = p.join(vaultPath, 'Papers');
       final paperDir = Directory(paperDirPath);
-      if (!await paperDir.exists()) await paperDir.create(recursive: true);
+      if (!await paperDir.exists()) {
+        await paperDir.create(recursive: true);
+      }
 
       String formatYamlList(String input, String folderName) {
         if (input.trim().isEmpty || input.toLowerCase() == "not given")
@@ -618,9 +645,22 @@ class _MainScreenState extends State<MainScreen> {
             .join(', ');
       }
 
-      String absPath = selectedPdf!.path.replaceAll(r'\', '/');
-      if (!absPath.startsWith('/')) absPath = '/$absPath';
-      String fileUri = "file://$absPath";
+      final safeTitle = _titleCtrl.text.trim().replaceAll(
+        RegExp(r'[\\/:*?"<>|]'),
+        '_',
+      );
+      final baseName = safeTitle.isNotEmpty
+          ? safeTitle
+          : p.basenameWithoutExtension(selectedPdf!.path);
+      final pdfFileName = '$baseName.pdf';
+      final destPdf = File(p.join(paperDirPath, pdfFileName));
+
+      if (selectedPdf!.path != destPdf.path) {
+        await selectedPdf!.copy(destPdf.path);
+      }
+
+      // Obsidian-friendly relative link inside the vault
+      final pdfLink = '[[Papers/$pdfFileName]]';
 
       String markdownContent =
           '''---
@@ -633,7 +673,7 @@ keywords:${formatYamlList(_keywordsCtrl.text, "Tags")}
 ---
 # ${_titleCtrl.text}
 
-**Source PDF:** [Open Paper](<$fileUri>)
+**Source PDF:** $pdfLink
 
 ## 1. Summary
 ${_summaryCtrl.text}
@@ -652,29 +692,32 @@ ${_summaryCtrl.text}
 - **Limitations:** ${_limitationCtrl.text}
 ''';
 
-      String safeTitle = _titleCtrl.text.replaceAll(
-        RegExp(r'[\\/:*?"<>|]'),
-        '_',
-      );
-      String mdFileName = '${safeTitle.isEmpty ? 'Untitled' : safeTitle}.md';
-      File mdFile = File(p.join(paperDirPath, mdFileName));
+      final mdFileName = '$baseName.md';
+      final mdFile = File(p.join(paperDirPath, mdFileName));
       await mdFile.writeAsString(markdownContent);
 
-      await _createInternalNotes(_authorsCtrl.text, "Authors");
-      await _createInternalNotes(_keywordsCtrl.text, "Tags");
-      await _createInternalNotes(_datasetCtrl.text, "Datasets");
-      if (_yearCtrl.text.isNotEmpty)
-        await _createInternalNotes(_yearCtrl.text, "Years");
-      if (_venueCtrl.text.isNotEmpty)
-        await _createInternalNotes(_venueCtrl.text, "Venues");
+      await _createInternalNotes(_authorsCtrl.text, 'Authors');
+      await _createInternalNotes(_keywordsCtrl.text, 'Tags');
+      await _createInternalNotes(_datasetCtrl.text, 'Datasets');
+      if (_yearCtrl.text.isNotEmpty) {
+        await _createInternalNotes(_yearCtrl.text, 'Years');
+      }
+      if (_venueCtrl.text.isNotEmpty) {
+        await _createInternalNotes(_venueCtrl.text, 'Venues');
+      }
 
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Đã lưu vào Obsidian!')));
-      setState(() => statusText = 'Lưu thành công!');
-      _loadVaultLibrary(); // Cập nhật lại danh sách thư viện sau khi lưu mới
+      if (!mounted) return;
+      _showUserMessage('Saved to Obsidian:\n${mdFile.path}');
+      _loadVaultLibrary();
+    } on FileSystemException catch (e) {
+      _showUserMessage(
+        'Cannot write to vault (macOS sandbox?). Open Settings → Browse and re-select your Obsidian vault folder.\n\n$e',
+        isError: true,
+      );
     } catch (e) {
-      setState(() => statusText = 'Lỗi: $e');
+      _showUserMessage('Save failed: $e', isError: true);
+    } finally {
+      if (mounted) setState(() => isLoading = false);
     }
   }
 
@@ -834,7 +877,9 @@ ${_summaryCtrl.text}
                     ),
                     const SizedBox(height: 16),
                     FilledButton.icon(
-                      onPressed: (selectedPdf == null || isLoading)
+                      onPressed: (selectedPdf == null ||
+                              isLoading ||
+                              vaultPath.trim().isEmpty)
                           ? null
                           : _saveToObsidian,
                       icon: const Icon(Icons.save_alt),
@@ -853,6 +898,16 @@ ${_summaryCtrl.text}
                         ),
                       ),
                     ),
+                    if (vaultPath.trim().isEmpty) ...[
+                      const SizedBox(height: 8),
+                      Text(
+                        'Set vault path in Settings (use Browse on macOS).',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Colors.orange.shade800,
+                        ),
+                      ),
+                    ],
                   ],
                 ),
               ),
@@ -1519,10 +1574,6 @@ ${_summaryCtrl.text}
 
   void _showSettingsDialog(BuildContext context) {
     final vCtrl = TextEditingController(text: vaultPath);
-    final regionCtrl = TextEditingController(text: bedrockRegion);
-    final modelCtrl = TextEditingController(text: bedrockModelId);
-    final accessKeyCtrl = TextEditingController(text: awsAccessKeyId);
-    final secretKeyCtrl = TextEditingController(text: awsSecretAccessKey);
 
     showDialog(
       context: context,
@@ -1539,6 +1590,7 @@ ${_summaryCtrl.text}
               children: [
                 TextField(
                   controller: vCtrl,
+                  readOnly: VaultAccess.requiresPickerGrant,
                   decoration: InputDecoration(
                     labelText: 'Obsidian Vault Path',
                     prefixIcon: const Icon(Icons.folder_outlined),
@@ -1548,14 +1600,21 @@ ${_summaryCtrl.text}
                             icon: const Icon(Icons.folder_open),
                             onPressed: () async {
                               final path =
-                                  await FilePicker.platform.getDirectoryPath(
-                                dialogTitle:
-                                    'Select your Obsidian vault folder',
-                                lockParentWindow: true,
+                                  await VaultAccess.pickVaultWithWriteAccess(
+                                initialDirectory: vCtrl.text.isNotEmpty
+                                    ? vCtrl.text
+                                    : null,
                               );
-                              if (path != null && path.isNotEmpty) {
-                                vCtrl.text = path;
+                              if (path == null || path.isEmpty) return;
+                              if (!await VaultAccess.canWriteToVault(path)) {
+                                _showUserMessage(
+                                  'Cannot write to this folder. Pick your Obsidian vault root.',
+                                  isError: true,
+                                );
+                                return;
                               }
+                              vCtrl.text = path;
+                              _showUserMessage('Vault folder OK (write access granted).');
                             },
                           )
                         : null,
@@ -1569,49 +1628,10 @@ ${_summaryCtrl.text}
                       style: TextStyle(fontSize: 12, color: Colors.grey),
                     ),
                   ),
-                const SizedBox(height: 16),
-                Text(
-                  'AWS Bedrock',
-                  style: TextStyle(
-                    fontWeight: FontWeight.bold,
-                    color: Colors.grey.shade700,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                TextField(
-                  controller: regionCtrl,
-                  decoration: const InputDecoration(
-                    labelText: 'AWS Region',
-                    hintText: 'us-east-1',
-                  ),
-                ),
-                const SizedBox(height: 8),
-                TextField(
-                  controller: modelCtrl,
-                  decoration: const InputDecoration(
-                    labelText: 'Model ID',
-                    hintText: 'anthropic.claude-3-5-sonnet-20240620-v2:0',
-                  ),
-                ),
-                const SizedBox(height: 8),
-                TextField(
-                  controller: accessKeyCtrl,
-                  decoration: const InputDecoration(
-                    labelText: 'AWS Access Key ID',
-                  ),
-                ),
-                const SizedBox(height: 8),
-                TextField(
-                  controller: secretKeyCtrl,
-                  obscureText: true,
-                  decoration: const InputDecoration(
-                    labelText: 'AWS Secret Access Key',
-                  ),
-                ),
                 const SizedBox(height: 8),
                 const Text(
-                  'AWS keys: copy .env.example → .env in project root (gitignored). '
-                  'Grobid: http://localhost:8070 (Docker).',
+                  'AWS Bedrock is configured only via .env bundled at build time '
+                  '(see .env.example). Grobid: http://localhost:8070 (Docker).',
                   style: TextStyle(fontSize: 12, color: Colors.grey),
                 ),
               ],
@@ -1624,16 +1644,19 @@ ${_summaryCtrl.text}
             child: const Text('Cancel'),
           ),
           FilledButton(
-            onPressed: () {
-              setState(() {
-                vaultPath = vCtrl.text;
-                bedrockRegion = regionCtrl.text.trim();
-                bedrockModelId = modelCtrl.text.trim();
-                awsAccessKeyId = accessKeyCtrl.text.trim();
-                awsSecretAccessKey = secretKeyCtrl.text.trim();
-              });
-              _saveSettings();
-              Navigator.pop(context);
+            onPressed: () async {
+              final newVault = vCtrl.text.trim();
+              if (newVault.isNotEmpty &&
+                  !await VaultAccess.canWriteToVault(newVault)) {
+                _showUserMessage(
+                  'Cannot write to vault. Use Browse to select the folder (macOS sandbox).',
+                  isError: true,
+                );
+                return;
+              }
+              setState(() => vaultPath = newVault);
+              await _saveSettings();
+              if (context.mounted) Navigator.pop(context);
             },
             child: const Text('Save Changes'),
           ),

@@ -47,8 +47,9 @@ class EnvConfig {
           _parse(await projectFile.readAsString());
           _loadedFrom = projectFile.path;
         } on IOException catch (e) {
-          if (kDebugMode)
+          if (kDebugMode) {
             debugPrint('Env: could not read ${projectFile.path}: $e');
+          }
         }
       }
     }

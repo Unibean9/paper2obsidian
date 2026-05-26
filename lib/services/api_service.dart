@@ -299,7 +299,7 @@ class ResearchApiService {
       String year = '';
 
       final titleElement = root.findAllElements('title').firstOrNull;
-      title = titleElement?.text ?? '';
+      title = titleElement?.innerText ?? '';
 
       final authorElements = root.findAllElements('author').toList();
       final authorNames = <String>[];
@@ -308,9 +308,9 @@ class ResearchApiService {
         final persName = author.findElements('persName').firstOrNull;
         if (persName != null) {
           final forename =
-              persName.findElements('forename').firstOrNull?.text ?? '';
+              persName.findElements('forename').firstOrNull?.innerText ?? '';
           final surname =
-              persName.findElements('surname').firstOrNull?.text ?? '';
+              persName.findElements('surname').firstOrNull?.innerText ?? '';
           if (surname.isNotEmpty) {
             authorNames.add(
               '$surname${forename.isNotEmpty ? ', $forename' : ''}',
@@ -321,11 +321,11 @@ class ResearchApiService {
       authors = authorNames.join('; ');
 
       final abstractElement = root.findAllElements('abstract').firstOrNull;
-      abstract = abstractElement?.text ?? '';
+      abstract = abstractElement?.innerText ?? '';
 
       final keywordElements = root.findAllElements('term').toList();
       keywords = keywordElements
-          .map((e) => e.text)
+          .map((e) => e.innerText)
           .where((k) => k.isNotEmpty)
           .join(', ');
 
@@ -342,12 +342,12 @@ class ResearchApiService {
             .findElements('analytic')
             .expand((e) => e.findElements('title'))
             .firstOrNull
-            ?.text;
+            ?.innerText;
         final monogrTitle = bibl
             .findElements('monogr')
             .expand((e) => e.findElements('title'))
             .firstOrNull
-            ?.text;
+            ?.innerText;
         final citeTitle = analyticTitle ?? monogrTitle ?? '';
 
         if (citeTitle.isNotEmpty && title.isNotEmpty) {
@@ -370,7 +370,7 @@ class ResearchApiService {
         final authorsNodes = bibl.findAllElements('author');
         for (var author in authorsNodes) {
           final surname =
-              author.findAllElements('surname').firstOrNull?.text ?? '';
+              author.findAllElements('surname').firstOrNull?.innerText ?? '';
           if (surname.isNotEmpty) authorsList.add(surname);
         }
 

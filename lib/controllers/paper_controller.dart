@@ -1,17 +1,19 @@
 import 'dart:io';
 
-import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 import 'package:http/http.dart' as http;
 import 'package:syncfusion_flutter_pdf/pdf.dart';
 
+import '../constants/messages.dart';
 import '../models/paper_metadata.dart';
 import '../services/api_service.dart';
+import '../services/logger_service.dart';
 import '../utils/title_inference.dart';
 
 /// Plain Dart class that owns all business logic for the paper processing pipeline.
 /// Does NOT import any Flutter widgets or call setState.
-/// All methods return `Future<PaperMetadata>` or `Future<T>` — the screen calls setState after each await.
+/// All methods return `Future<PaperMetadata>` or `Future<T>` — the screen calls
+/// setState after each await.
 class PaperController {
   PaperController({
     required this.apiService,
@@ -52,7 +54,7 @@ class PaperController {
   /// Returns PaperMetadata with fullPdfText and resolvedPdf set.
   Future<PaperMetadata> processPdf(File pdf) async {
     isCancelled = false;
-    onLog('⏳ Step 1/4: Extracting text from PDF...');
+    onLog(AppMessages.get(MessageKey.statusStep1Extracting));
 
     final PdfDocument document = PdfDocument(
       inputBytes: pdf.readAsBytesSync(),
@@ -68,7 +70,7 @@ class PaperController {
     ).extractText(startPageIndex: 0, endPageIndex: maxPagesForContext - 1);
     document.dispose();
 
-    onLog('✅ Text extracted (${fullPdfText.length} chars).');
+    onLog(AppMessages.statusTextExtracted(fullPdfText.length));
 
     final PaperMetadata meta = await _processWithGrobidAndOpenAlex(
       pdf: pdf,
@@ -87,7 +89,7 @@ class PaperController {
     required String fullPdfText,
   }) async {
     // --- STEP 2: GROBID ---
-    onLog('⏳ Step 2/4: Parsing structure with Grobid...');
+    onLog(AppMessages.get(MessageKey.statusStep2Grobid));
     Map<String, dynamic> grobidData = {};
 
     try {
@@ -96,14 +98,19 @@ class PaperController {
 
       final String foundTitle = grobidData['title'] ?? '';
       if (foundTitle.isNotEmpty) {
-        onLog(
-          '✅ Grobid success: Found Title & ${grobidData['authors'].toString().split(';').length} authors.',
-        );
+        final int authorCount =
+            grobidData['authors'].toString().split(';').length;
+        onLog(AppMessages.statusGrobidSuccess(authorCount));
       } else {
-        onLog('ℹ️ Grobid: no title in PDF structure (will infer from text).');
+        onLog(AppMessages.get(MessageKey.statusGrobidNoTitle));
       }
     } catch (e) {
-      onLog('ℹ️ Grobid unavailable — continuing with text/Bedrock only.');
+      AppLogger.log(
+        'Grobid processing failed',
+        category: LogCategory.network,
+        error: e,
+      );
+      onLog(AppMessages.get(MessageKey.statusGrobidUnavailable));
       grobidData = {'title': '', 'authors': '', 'year': ''};
     }
 
@@ -115,13 +122,13 @@ class PaperController {
     );
     grobidData['title'] = searchTitle;
     if ((grobidData['title']?.toString().trim() ?? '').isNotEmpty) {
-      onLog('ℹ️ Title for search: $searchTitle');
+      onLog(AppMessages.statusTitleForSearch(searchTitle));
     }
 
     if (isCancelled) return PaperMetadata.empty();
 
     // --- STEP 3: OPENALEX ---
-    onLog('⏳ Step 3/4: Fetching precise OpenAlex metadata...');
+    onLog(AppMessages.get(MessageKey.statusStep3OpenAlex));
     Map<String, dynamic> openalexData = {};
     if (searchTitle.isNotEmpty &&
         !TitleInference.looksLikeFilename(searchTitle)) {
@@ -131,25 +138,30 @@ class PaperController {
             (openalexData['doi']?.toString() ?? '').isNotEmpty &&
             openalexData['doi'] != 'Not Given') {
           onLog(
-            '✅ OpenAlex success: Found DOI (${openalexData['doi']}) and Venue.',
+            AppMessages.statusOpenAlexSuccess(
+              openalexData['doi'].toString(),
+            ),
           );
         } else {
-          onLog(
-            'ℹ️ OpenAlex: no match for this title (non-academic PDF is OK).',
-          );
+          onLog(AppMessages.get(MessageKey.statusOpenAlexNoMatch));
         }
       } catch (e) {
-        onLog('ℹ️ OpenAlex skipped: $e');
+        AppLogger.log(
+          'OpenAlex metadata fetch failed',
+          category: LogCategory.network,
+          error: e,
+        );
+        onLog(AppMessages.statusOpenAlexSkippedError(e));
         openalexData = {};
       }
     } else {
-      onLog('ℹ️ OpenAlex skipped (title not suitable for academic search).');
+      onLog(AppMessages.get(MessageKey.statusOpenAlexSkippedTitle));
     }
 
     if (isCancelled) return PaperMetadata.empty();
 
     // --- STEP 4: AWS BEDROCK ---
-    onLog('⏳ Step 4/4: Extracting metadata & summary with AWS Bedrock...');
+    onLog(AppMessages.get(MessageKey.statusStep4Bedrock));
     String summary = 'Not Given';
     Map<String, dynamic> extraData = {};
     try {
@@ -157,7 +169,7 @@ class PaperController {
           await apiService.extractPaperMetadataWithBedrock(fullPdfText);
       summary = result.summary;
       extraData = result.extraData;
-      onLog('✅ Bedrock success: Extracted extra details.');
+      onLog(AppMessages.statusBedrockSuccess());
 
       // Retry OpenAlex if Bedrock found a better title
       final String bedrockTitle =
@@ -166,7 +178,7 @@ class PaperController {
           bedrockTitle.isNotEmpty &&
           bedrockTitle != 'Not Given' &&
           !TitleInference.looksLikeFilename(bedrockTitle)) {
-        onLog('ℹ️ Retrying OpenAlex with Bedrock title…');
+        onLog(AppMessages.get(MessageKey.statusBedrockRetryOpenAlex));
         try {
           final retry = await apiService.fetchOpenAlexMetadata(bedrockTitle);
           if (retry.isNotEmpty &&
@@ -174,14 +186,19 @@ class PaperController {
               retry['doi'] != 'Not Given') {
             openalexData = retry;
             grobidData['title'] = bedrockTitle;
-            onLog('✅ OpenAlex matched after Bedrock title.');
+            onLog(AppMessages.get(MessageKey.statusOpenAlexMatchedBedrock));
           }
         } catch (_) {}
       } else if (bedrockTitle.isNotEmpty && bedrockTitle != 'Not Given') {
         grobidData['title'] = bedrockTitle;
       }
     } catch (e) {
-      onLog('⚠️ Bedrock error: $e');
+      AppLogger.log(
+        'Bedrock metadata extraction failed',
+        category: LogCategory.parse,
+        error: e,
+      );
+      onLog(AppMessages.statusBedrockError(e));
     }
 
     if (isCancelled) return PaperMetadata.empty();
@@ -195,7 +212,7 @@ class PaperController {
       resolvedPdf: pdf,
     );
 
-    onLog('🎉 Success! All data extracted and merged.');
+    onLog(AppMessages.get(MessageKey.statusAllDone));
     return meta;
   }
 
@@ -347,10 +364,11 @@ class PaperController {
       await pdf.copy(destPdf.path);
     }
 
-    // Obsidian wiki-link for internal navigation
+    // Obsidian wiki-link for internal navigation.
     final String pdfLink = '[[Papers/$pdfFileName]]';
-    // file:// URI written into the markdown so openPaperFromLibrary can locate the PDF on disk.
-    // The regex in openPaperFromLibrary looks for <file:///path> — this must stay in sync.
+    // file:// URI written into the markdown so openPaperFromLibrary can locate
+    // the PDF on disk. The regex in openPaperFromLibrary expects <file:///path>
+    // — this must stay in sync.
     final String encodedPdfPath =
         Uri.encodeFull(destPdf.path.replaceAll(r'\', '/'));
     final String pdfFileUri = '<file:///$encodedPdfPath>';
@@ -423,7 +441,11 @@ ${meta.summary}
         }
       }
     } catch (e) {
-      debugPrint('Error creating internal notes: $e');
+      AppLogger.log(
+        'Error creating internal notes for $folderName',
+        category: LogCategory.other,
+        error: e,
+      );
     }
   }
 
@@ -447,7 +469,7 @@ ${meta.summary}
             final String title = p.basenameWithoutExtension(file.path);
             String year = 'Not Given';
 
-            // Parse năm từ YAML cơ bản bằng Regex
+            // Parse year from YAML frontmatter using regex.
             final RegExp yearRegex =
                 RegExp(r'year:\s*"\[\[Years\/(.*?)\]\]"');
             final RegExpMatch? match = yearRegex.firstMatch(content);
@@ -460,7 +482,11 @@ ${meta.summary}
         }
       }
     } catch (e) {
-      debugPrint('Lỗi tải thư viện: $e');
+      AppLogger.log(
+        'Failed to load vault library',
+        category: LogCategory.other,
+        error: e,
+      );
     }
     return papers;
   }
@@ -472,8 +498,8 @@ ${meta.summary}
     final File mdFile = File(mdPath);
     final String content = await mdFile.readAsString();
 
-    // Trích xuất đường dẫn file PDF gốc từ file Markdown
-    // Định dạng mẫu: **Source PDF:** [Open Paper](<file:///D:/path/file.pdf>)
+    // Extract original PDF path from the Markdown file.
+    // Expected format: **Source PDF:** [Open Paper](<file:///D:/path/file.pdf>)
     final RegExp pdfPathRegex = RegExp(r'\<file:\/\/\/(.*?)\>');
     final RegExpMatch? match = pdfPathRegex.firstMatch(content);
 
@@ -482,7 +508,7 @@ ${meta.summary}
     }
 
     String decodedPdfPath = Uri.decodeFull(match.group(1)!);
-    // Sửa lại dấu gạch chéo cho hệ điều hành Windows nếu cần
+    // Restore Windows backslashes if needed.
     if (Platform.isWindows) {
       decodedPdfPath = decodedPdfPath.replaceAll('/', '\\');
     }
@@ -492,9 +518,9 @@ ${meta.summary}
       throw Exception('Original PDF file not found at $decodedPdfPath');
     }
 
-    onLog('✅ PDF found: ${p.basename(pdfFile.path)}');
+    onLog(AppMessages.statusPdfFound(p.basename(pdfFile.path)));
 
-    // Trích xuất lại văn bản để phục vụ Chat RAG
+    // Re-extract text for Chat RAG context.
     final PdfDocument document = PdfDocument(
       inputBytes: pdfFile.readAsBytesSync(),
     );
@@ -505,7 +531,7 @@ ${meta.summary}
     ).extractText(startPageIndex: 0, endPageIndex: maxPages - 1);
     document.dispose();
 
-    // Simple parsing of YAML frontmatter if possible
+    // Parse basic fields from YAML frontmatter.
     final RegExpMatch? doiMatch =
         RegExp(r'doi:\s*"(.*?)"').firstMatch(content);
     final String doi = doiMatch?.group(1) ?? '';

@@ -1,15 +1,17 @@
 import 'dart:io';
 
-import 'package:flutter/foundation.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:path/path.dart' as p;
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../constants/messages.dart';
 import '../controllers/paper_controller.dart';
 import '../models/paper_metadata.dart';
 import '../services/api_service.dart';
 import '../services/bedrock_client.dart';
+import '../services/logger_service.dart';
 import '../utils/desktop_file_helper.dart';
 import '../utils/vault_access.dart';
 import '../widgets/actions_panel.dart';
@@ -36,7 +38,7 @@ class _MainScreenState extends State<MainScreen> {
   File? selectedPdf;
   bool isLoading = false;
   // NOTE: _isCancelled is NOT in Bucket A — it lives in PaperController.isCancelled (single source of truth)
-  String statusText = 'Sẵn sàng';
+  String statusText = AppMessages.get(MessageKey.statusReady);
   String fullPdfText = '';
   List<Map<String, String>> chatMessages = [];
   bool isChatLoading = false;
@@ -104,7 +106,7 @@ class _MainScreenState extends State<MainScreen> {
     if (!mounted) return;
     setState(() {
       progressLogs.add(message);
-      statusText = message; // Giữ lại biến này để đổi màu box (xanh/đỏ)
+      statusText = message; // Kept to drive log-box colour (green/red).
     });
   }
 
@@ -123,7 +125,7 @@ class _MainScreenState extends State<MainScreen> {
     await prefs.setString('vaultPath', vaultPath);
     if (!mounted) return; // ← guard before ScaffoldMessenger to prevent use-after-dispose crash
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Saved settings!')),
+      SnackBar(content: Text(AppMessages.get(MessageKey.statusSettingsSaved))),
     );
   }
 
@@ -144,12 +146,15 @@ class _MainScreenState extends State<MainScreen> {
 
   Future<bool> _ensureVaultReady() async {
     if (selectedPdf == null) {
-      _showUserMessage('Select a PDF first.', isError: true);
+      _showUserMessage(
+        AppMessages.get(MessageKey.errorSelectPdfFirst),
+        isError: true,
+      );
       return false;
     }
     if (vaultPath.trim().isEmpty) {
       _showUserMessage(
-        'Set your Obsidian vault in Settings → Browse (required on macOS).',
+        AppMessages.get(MessageKey.errorSetVaultPath),
         isError: true,
       );
       _showSettingsDialog(context);
@@ -159,18 +164,20 @@ class _MainScreenState extends State<MainScreen> {
     try {
       vaultExists = await Directory(vaultPath).exists();
     } catch (e) {
-      debugPrint(
-        '_ensureVaultReady: directory check failed for "$vaultPath": $e',
+      AppLogger.log(
+        '_ensureVaultReady: directory check failed for "$vaultPath"',
+        category: LogCategory.other,
+        error: e,
       );
       _showUserMessage(
-        'Cannot access vault path. Use Settings → Browse to select the folder.',
+        AppMessages.get(MessageKey.errorVaultAccessFailed),
         isError: true,
       );
       return false;
     }
     if (!vaultExists) {
       _showUserMessage(
-        'Vault folder not found. Use Settings → Browse to select it again.',
+        AppMessages.get(MessageKey.errorVaultNotFound),
         isError: true,
       );
       return false;
@@ -180,7 +187,7 @@ class _MainScreenState extends State<MainScreen> {
 
     if (VaultAccess.requiresPickerGrant) {
       _showUserMessage(
-        'macOS blocked vault access. Please select the vault folder again.',
+        AppMessages.get(MessageKey.errorMacosVaultBlocked),
         isError: true,
       );
       final picked = await VaultAccess.pickVaultWithWriteAccess(
@@ -193,7 +200,7 @@ class _MainScreenState extends State<MainScreen> {
     }
 
     _showUserMessage(
-      'Cannot write to vault. On macOS you must use Browse in Settings — typing the path is not enough.',
+      AppMessages.get(MessageKey.errorVaultWriteDenied),
       isError: true,
     );
     return false;
@@ -233,7 +240,7 @@ class _MainScreenState extends State<MainScreen> {
       final file = await resolvePickedFile(picked);
       if (file == null) {
         _showUserMessage(
-          'Could not read the selected PDF. Try another file.',
+          AppMessages.get(MessageKey.errorPdfReadFailed),
           isError: true,
         );
         return;
@@ -242,7 +249,7 @@ class _MainScreenState extends State<MainScreen> {
       if (!mounted) return;
       setState(() {
         selectedPdf = file;
-        statusText = 'Selected: ${p.basename(file.path)}';
+        statusText = AppMessages.statusSelectedPdf(p.basename(file.path));
         chatMessages.clear();
         fullPdfText = '';
         isLoading = true;
@@ -255,23 +262,31 @@ class _MainScreenState extends State<MainScreen> {
         // and returned PaperMetadata.empty() — do not overwrite already-populated fields.
         if (mounted && !_paperController.isCancelled) {
           _applyMetadata(meta);
-          // Khởi tạo chat sau khi trích xuất xong
           setState(() {
             chatMessages.add({
               'role': 'assistant',
-              'content':
-                  'Hi! I have read the paper. What would you like to know about it?',
+              'content': AppMessages.get(MessageKey.chatInitialGreeting),
             });
           });
         }
       } catch (e) {
-        _addLog('❌ PDF extraction error: $e');
+        AppLogger.log(
+        'PDF extraction failed',
+        category: LogCategory.parse,
+        error: e,
+      );
+      _addLog(AppMessages.errorPdfExtraction(e));
       } finally {
         if (mounted) setState(() => isLoading = false);
       }
     } catch (e, stack) {
-      debugPrint('PDF picker error: $e\n$stack');
-      _showUserMessage('Failed to open file picker: $e', isError: true);
+      AppLogger.log(
+        'PDF picker error',
+        category: LogCategory.ui,
+        error: e,
+        stackTrace: stack,
+      );
+      _showUserMessage(AppMessages.errorFilePickerFailed(e), isError: true);
     }
   }
 
@@ -303,16 +318,23 @@ class _MainScreenState extends State<MainScreen> {
         pdf: selectedPdf!,
       );
       if (!mounted) return;
-      _showUserMessage('Saved to Obsidian!');
+      _showUserMessage(AppMessages.get(MessageKey.statusSavedToObsidian));
       // Refresh the library tab to show the newly saved note
       _libraryTabKey.currentState?.refresh();
     } on FileSystemException catch (e) {
-      _showUserMessage(
-        'Cannot write to vault. Check folder permissions or re-select it in Settings → Browse.\n\n$e',
-        isError: true,
+      AppLogger.log(
+        'FileSystemException saving to Obsidian',
+        category: LogCategory.other,
+        error: e,
       );
+      _showUserMessage(AppMessages.errorSavePermission(e), isError: true);
     } catch (e) {
-      _showUserMessage('Save failed: $e', isError: true);
+      AppLogger.log(
+        'Unexpected error saving to Obsidian',
+        category: LogCategory.other,
+        error: e,
+      );
+      _showUserMessage(AppMessages.errorSaveFailed(e), isError: true);
     } finally {
       if (mounted) setState(() => isLoading = false);
     }
@@ -328,7 +350,7 @@ class _MainScreenState extends State<MainScreen> {
       progressLogs.clear();
       chatMessages.clear();
     });
-    _addLog('📂 Loading paper from library: ${p.basename(mdPath)}');
+    _addLog(AppMessages.statusLoadingPaper(p.basename(mdPath)));
 
     try {
       final PaperMetadata meta =
@@ -338,13 +360,17 @@ class _MainScreenState extends State<MainScreen> {
         setState(() {
           chatMessages.add({
             'role': 'assistant',
-            'content':
-                'I loaded this paper from your library vault. You can now read it or ask me questions about it!',
+            'content': AppMessages.get(MessageKey.chatLibraryGreeting),
           });
         });
       }
     } catch (e) {
-      _addLog('❌ $e');
+      AppLogger.log(
+        'Failed to open paper from library',
+        category: LogCategory.other,
+        error: e,
+      );
+      _addLog(AppMessages.errorLibraryItem(e));
     } finally {
       if (mounted) setState(() => isLoading = false);
     }
@@ -373,7 +399,7 @@ class _MainScreenState extends State<MainScreen> {
     } catch (e) {
       if (mounted) {
         setState(() => chatMessages
-            .add({'role': 'assistant', 'content': 'Error: $e'}));
+            .add({'role': 'assistant', 'content': AppMessages.errorChat(e)}));
       }
     } finally {
       if (mounted) setState(() => isChatLoading = false);
@@ -389,7 +415,7 @@ class _MainScreenState extends State<MainScreen> {
     _paperController.cancel();
     setState(() {
       isLoading = false;
-      statusText = 'Đã dừng trích xuất. Bạn có thể chọn file khác.';
+      statusText = AppMessages.get(MessageKey.statusCancelled);
     });
   }
 
@@ -454,7 +480,7 @@ class _MainScreenState extends State<MainScreen> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             // ------------------------------------------
-            // CỘT 1: ACTIONS PANEL
+            // COLUMN 1: ACTIONS PANEL
             // ------------------------------------------
             SizedBox(
               width: 260,
@@ -474,7 +500,7 @@ class _MainScreenState extends State<MainScreen> {
             const SizedBox(width: 20),
 
             // ------------------------------------------
-            // CỘT 2: PDF PREVIEW WITH ZOOM & TEXT INTERACTION TOOLBAR
+            // COLUMN 2: PDF PREVIEW WITH ZOOM & TEXT INTERACTION TOOLBAR
             // ------------------------------------------
             Expanded(
               flex: 5,
@@ -487,14 +513,14 @@ class _MainScreenState extends State<MainScreen> {
             const SizedBox(width: 20),
 
             // ------------------------------------------
-            // CỘT 3: 3-TAB MANAGEMENT PANEL (METADATA, CHAT, VAULT LIBRARY)
+            // COLUMN 3: 4-TAB MANAGEMENT PANEL (METADATA, CHAT, CITATIONS, LIBRARY)
             // ------------------------------------------
             Expanded(
               flex: 4,
               child: PanelContainer(
                 padding: EdgeInsets.zero,
                 child: DefaultTabController(
-                  length: 4, // Cấu hình 4 Tab chuyên sâu
+                  length: 4,
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
@@ -558,7 +584,7 @@ class _MainScreenState extends State<MainScreen> {
                               primaryColor: primaryColor,
                             ),
 
-                            // TAB 4: VAULT LIBRARY SCREEN (MÀN HÌNH THƯ VIỆN)
+                            // TAB 4: VAULT LIBRARY
                             LibraryTab(
                               key: _libraryTabKey,
                               vaultPath: vaultPath,

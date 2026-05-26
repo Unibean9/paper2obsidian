@@ -46,7 +46,7 @@ class _ActionsPanelState extends State<ActionsPanel> {
   @override
   void didUpdateWidget(covariant ActionsPanel oldWidget) {
     super.didUpdateWidget(oldWidget);
-    // Tự động cuộn xuống cuối khi có log mới
+    // Auto-scroll to bottom when new log entries arrive.
     if (widget.progressLogs.length != oldWidget.progressLogs.length) {
       _scrollLogsToBottom();
     }

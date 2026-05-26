@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../constants/messages.dart';
+
 /// Tab 2 — AI Chat assistant for discussing the loaded paper.
 /// Owns its own ScrollController and input TextEditingController (Bucket C).
 /// The parent screen owns chatMessages and fullPdfText state.
@@ -40,7 +42,7 @@ class _ChatTabState extends State<ChatTab> {
   @override
   void didUpdateWidget(covariant ChatTab oldWidget) {
     super.didUpdateWidget(oldWidget);
-    // Tự động cuộn xuống cuối khi có tin nhắn mới
+    // Auto-scroll to bottom when new messages arrive.
     if (widget.chatMessages.length != oldWidget.chatMessages.length) {
       _scrollToBottom();
     }
@@ -76,7 +78,7 @@ class _ChatTabState extends State<ChatTab> {
     if (widget.fullPdfText.isEmpty) {
       return Center(
         child: Text(
-          'Select a PDF to start chatting.',
+          AppMessages.get(MessageKey.chatEmptyState),
           style: TextStyle(color: Colors.grey.shade500),
         ),
       );
@@ -147,7 +149,7 @@ class _ChatTabState extends State<ChatTab> {
                 ),
                 const SizedBox(width: 8),
                 Text(
-                  'AI is thinking...',
+                  AppMessages.get(MessageKey.chatThinking),
                   style: TextStyle(
                     color: Colors.grey.shade500,
                     fontSize: 12,
@@ -167,9 +169,9 @@ class _ChatTabState extends State<ChatTab> {
             child: Wrap(
               spacing: 8,
               children: [
-                'Bài này có điểm gì novelty?',
-                'Research gap là gì?',
-                'Limitation là gì?',
+                AppMessages.get(MessageKey.chatSuggestionNovelty),
+                AppMessages.get(MessageKey.chatSuggestionResearchGap),
+                AppMessages.get(MessageKey.chatSuggestionLimitation),
               ].map((suggestion) {
                 return ActionChip(
                   label: Text(
@@ -197,7 +199,7 @@ class _ChatTabState extends State<ChatTab> {
                 child: TextField(
                   controller: _chatInputCtrl,
                   decoration: InputDecoration(
-                    hintText: 'Ask about this paper...',
+                    hintText: AppMessages.get(MessageKey.chatInputHint),
                     contentPadding: const EdgeInsets.symmetric(
                       horizontal: 16,
                       vertical: 12,

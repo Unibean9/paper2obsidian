@@ -4,6 +4,7 @@ import 'package:aws_common/aws_common.dart';
 import 'package:aws_signature_v4/aws_signature_v4.dart';
 
 import '../config/env_config.dart';
+import 'logger_service.dart';
 
 /// Configuration for AWS Bedrock Runtime (Converse API).
 class BedrockConfig {
@@ -154,6 +155,11 @@ class BedrockClient {
     final responseBody = await response.decodeBody();
 
     if (response.statusCode != 200) {
+      AppLogger.log(
+        'Bedrock HTTP error ${response.statusCode}',
+        category: LogCategory.network,
+        error: responseBody,
+      );
       throw Exception('Bedrock error ${response.statusCode}: $responseBody');
     }
 

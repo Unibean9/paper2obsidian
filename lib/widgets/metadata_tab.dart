@@ -57,7 +57,7 @@ class MetadataTab extends StatelessWidget {
   }
 }
 
-// HÀM XÂY DỰNG TEXTFIELD KIỂU MỚI: TÁCH BIỆT LABEL RA NGOÀI HOÀN TOÀN
+// Builds a labeled TextField with the label rendered above the input field.
 Widget _buildTextField(
   String label,
   TextEditingController controller, {

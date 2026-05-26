@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../constants/messages.dart';
+
 /// Tab 4 — Vault Library: shows all saved paper notes from the Obsidian vault.
 /// Owns its loading state and paper list (Bucket C).
 /// Exposes a public [refresh] method so the parent screen can trigger a reload
@@ -42,7 +44,7 @@ class LibraryTabState extends State<LibraryTab> {
   @override
   void didUpdateWidget(covariant LibraryTab oldWidget) {
     super.didUpdateWidget(oldWidget);
-    // Tải lại khi vault path thay đổi
+    // Reload when vaultPath changes.
     if (widget.vaultPath != oldWidget.vaultPath) {
       _refresh();
     }
@@ -78,7 +80,7 @@ class LibraryTabState extends State<LibraryTab> {
             Icon(Icons.folder_open, size: 48, color: Colors.grey.shade300),
             const SizedBox(height: 12),
             Text(
-              'Library is empty.',
+              AppMessages.get(MessageKey.libraryEmpty),
               style: TextStyle(color: Colors.grey.shade500),
             ),
           ],
@@ -94,13 +96,13 @@ class LibraryTabState extends State<LibraryTab> {
           child: Row(
             children: [
               Text(
-                'Saved Notes (${_papers.length})',
+                AppMessages.labelSavedNotesCount(_papers.length),
                 style: const TextStyle(fontWeight: FontWeight.bold),
               ),
               const Spacer(),
               IconButton(
                 icon: const Icon(Icons.refresh, size: 20),
-                tooltip: 'Làm mới thư viện',
+                tooltip: AppMessages.get(MessageKey.libraryRefreshTooltip),
                 onPressed: _refresh,
               ),
             ],
@@ -139,7 +141,6 @@ class LibraryTabState extends State<LibraryTab> {
                   size: 12,
                   color: Colors.grey.shade400,
                 ),
-                // Kích hoạt vòng lặp đóng đọc lại file
                 onTap: () => widget.onOpenPaper(paper['path']!),
               );
             },

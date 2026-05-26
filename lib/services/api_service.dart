@@ -4,6 +4,7 @@ import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart';
 import 'package:xml/xml.dart' as xml;
 import 'bedrock_client.dart';
+import 'logger_service.dart';
 
 /// ResearchApiService handles external API integrations for research document processing.
 /// Supports: Grobid (PDF structure), OpenAlex (metadata), AWS Bedrock (summary & RAG chat).
@@ -60,12 +61,22 @@ class ResearchApiService {
           'Grobid error: ${streamedResponse.statusCode} - ${streamedResponse.reasonPhrase}',
         );
       }
-    } on SocketException {
+    } on SocketException catch (e) {
+      AppLogger.log(
+        'Cannot connect to Grobid at $grobidUrl',
+        category: LogCategory.network,
+        error: e,
+      );
       throw Exception(
         'Cannot connect to Grobid server at $grobidUrl. '
         'Please ensure Grobid is running via Docker: docker-compose up grobid',
       );
     } catch (e) {
+      AppLogger.log(
+        'Grobid processing failed',
+        category: LogCategory.network,
+        error: e,
+      );
       throw Exception('Grobid processing failed: ${e.toString()}');
     }
   }
@@ -105,9 +116,19 @@ class ResearchApiService {
       } else {
         throw Exception('OpenAlex API error: ${response.statusCode}');
       }
-    } on SocketException {
+    } on SocketException catch (e) {
+      AppLogger.log(
+        'Network error connecting to OpenAlex',
+        category: LogCategory.network,
+        error: e,
+      );
       throw Exception('Network error connecting to OpenAlex API');
     } catch (e) {
+      AppLogger.log(
+        'OpenAlex metadata fetch failed',
+        category: LogCategory.network,
+        error: e,
+      );
       throw Exception('OpenAlex metadata fetch failed: ${e.toString()}');
     }
   }
@@ -192,6 +213,11 @@ class ResearchApiService {
       final summary = extraData['summary']?.toString() ?? content;
       return (summary: summary, extraData: extraData);
     } catch (e) {
+      AppLogger.log(
+        'Bedrock metadata extraction failed',
+        category: LogCategory.parse,
+        error: e,
+      );
       throw Exception('Bedrock metadata extraction failed: ${e.toString()}');
     }
   }
@@ -217,6 +243,11 @@ class ResearchApiService {
       );
       return content.trim().isNotEmpty ? content.trim() : 'Not Given';
     } catch (e) {
+      AppLogger.log(
+        'Summary generation failed',
+        category: LogCategory.parse,
+        error: e,
+      );
       throw Exception('Summary generation failed: ${e.toString()}');
     }
   }
@@ -243,6 +274,11 @@ class ResearchApiService {
         maxTokens: 1024,
       );
     } catch (e) {
+      AppLogger.log(
+        'Chat with paper context failed',
+        category: LogCategory.network,
+        error: e,
+      );
       throw Exception('Chat failed: ${e.toString()}');
     }
   }

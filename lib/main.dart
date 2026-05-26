@@ -72,7 +72,7 @@ class _MainScreenState extends State<MainScreen> {
   http.Client? _client;
   File? selectedPdf;
   bool isLoading = false;
-  bool _isCancelled = false;  // Flag to cancel async operations
+  bool _isCancelled = false; // Flag to cancel async operations
   String statusText = 'Sẵn sàng';
 
   // API Services for professional metadata extraction
@@ -137,7 +137,9 @@ class _MainScreenState extends State<MainScreen> {
   Future<void> _loadSettings() async {
     final prefs = await SharedPreferences.getInstance();
     setState(() {
-      vaultPath = prefs.getString('vaultPath') ?? '';
+      // Normalize vault path for cross-platform compatibility (but keep empty as empty)
+      final rawPath = prefs.getString('vaultPath') ?? '';
+      vaultPath = rawPath.isEmpty ? '' : p.normalize(rawPath);
     });
     _loadVaultLibrary();
   }
@@ -243,13 +245,16 @@ class _MainScreenState extends State<MainScreen> {
           _datasetCtrl.clear();
           _summaryCtrl.clear();
           paperCitations.clear();
-          
+
           // Simple parsing of YAML frontmatter if possible
           final doiMatch = RegExp(r'doi:\s*"(.*?)"').firstMatch(content);
           if (doiMatch != null) _doiCtrl.text = doiMatch.group(1) ?? '';
-          
-          final summaryMatch = RegExp(r'## 1\. Summary\n([\s\S]*?)\n## 2\.').firstMatch(content);
-          if (summaryMatch != null) _summaryCtrl.text = summaryMatch.group(1)?.trim() ?? '';
+
+          final summaryMatch = RegExp(
+            r'## 1\. Summary\n([\s\S]*?)\n## 2\.',
+          ).firstMatch(content);
+          if (summaryMatch != null)
+            _summaryCtrl.text = summaryMatch.group(1)?.trim() ?? '';
 
           chatMessages.add({
             "role": "assistant",
@@ -324,12 +329,12 @@ class _MainScreenState extends State<MainScreen> {
 
   Future<void> _processPdf() async {
     if (selectedPdf == null) return;
-    
+
     setState(() {
       isLoading = true;
       progressLogs.clear(); // Xóa log cũ
     });
-    
+
     _addLog('⏳ Step 1/4: Extracting text from PDF...');
 
     try {
@@ -339,8 +344,10 @@ class _MainScreenState extends State<MainScreen> {
       String extractedTextPage0 = PdfTextExtractor(
         document,
       ).extractText(startPageIndex: 0, endPageIndex: 0);
-      
-      int maxPagesForContext = document.pages.count > 10 ? 10 : document.pages.count;
+
+      int maxPagesForContext = document.pages.count > 10
+          ? 10
+          : document.pages.count;
       fullPdfText = PdfTextExtractor(
         document,
       ).extractText(startPageIndex: 0, endPageIndex: maxPagesForContext - 1);
@@ -361,22 +368,26 @@ class _MainScreenState extends State<MainScreen> {
   Future<void> _processWithGrobidAndOpenAlex(String firstPageText) async {
     try {
       if (selectedPdf == null) return;
-      _isCancelled = false; 
+      _isCancelled = false;
 
       // --- STEP 2: GROBID ---
       _addLog('⏳ Step 2/4: Parsing structure with Grobid...');
       String grobidXml = '';
       Map<String, dynamic> grobidData = {};
-      
+
       try {
         grobidXml = await researchApiService.processPdfWithGrobid(selectedPdf!);
         grobidData = ResearchApiService.parseGrobidXml(grobidXml);
-        
+
         String foundTitle = grobidData['title'] ?? '';
         if (foundTitle.isNotEmpty) {
-          _addLog('✅ Grobid success: Found Title & ${grobidData['authors'].toString().split(';').length} authors.');
+          _addLog(
+            '✅ Grobid success: Found Title & ${grobidData['authors'].toString().split(';').length} authors.',
+          );
         } else {
-          _addLog('ℹ️ Grobid: no title in PDF structure (will infer from text).');
+          _addLog(
+            'ℹ️ Grobid: no title in PDF structure (will infer from text).',
+          );
         }
       } catch (e) {
         _addLog('ℹ️ Grobid unavailable — continuing with text/Bedrock only.');
@@ -404,21 +415,28 @@ class _MainScreenState extends State<MainScreen> {
       if (searchTitle.isNotEmpty &&
           !TitleInference.looksLikeFilename(searchTitle)) {
         try {
-          openalexData =
-              await researchApiService.fetchOpenAlexMetadata(searchTitle);
+          openalexData = await researchApiService.fetchOpenAlexMetadata(
+            searchTitle,
+          );
           if (openalexData.isNotEmpty &&
               (openalexData['doi']?.toString() ?? '').isNotEmpty &&
               openalexData['doi'] != 'Not Given') {
-            _addLog('✅ OpenAlex success: Found DOI (${openalexData['doi']}) and Venue.');
+            _addLog(
+              '✅ OpenAlex success: Found DOI (${openalexData['doi']}) and Venue.',
+            );
           } else {
-            _addLog('ℹ️ OpenAlex: no match for this title (non-academic PDF is OK).');
+            _addLog(
+              'ℹ️ OpenAlex: no match for this title (non-academic PDF is OK).',
+            );
           }
         } catch (e) {
           _addLog('ℹ️ OpenAlex skipped: $e');
           openalexData = {};
         }
       } else {
-        _addLog('ℹ️ OpenAlex skipped (title not suitable for academic search).');
+        _addLog(
+          'ℹ️ OpenAlex skipped (title not suitable for academic search).',
+        );
       }
 
       if (!mounted || _isCancelled) return;
@@ -464,7 +482,7 @@ class _MainScreenState extends State<MainScreen> {
       if (!mounted || _isCancelled) return;
 
       _populateMetadataFields(grobidData, openalexData, summary, extraData);
-      
+
       if (grobidData['citations'] != null && grobidData['citations'] is List) {
         setState(() {
           paperCitations = List<String>.from(grobidData['citations']);
@@ -472,7 +490,6 @@ class _MainScreenState extends State<MainScreen> {
       }
 
       _addLog('🎉 Success! All data extracted and merged.');
-      
     } catch (e) {
       if (mounted) {
         _addLog('❌ Processing error: $e');
@@ -496,7 +513,8 @@ class _MainScreenState extends State<MainScreen> {
 
     setState(() {
       final bedrockTitle = extraData['title']?.toString();
-      _titleCtrl.text = (openalexData['title'] as String?) ??
+      _titleCtrl.text =
+          (openalexData['title'] as String?) ??
           (bedrockTitle != null &&
                   bedrockTitle.isNotEmpty &&
                   bedrockTitle != 'Not Given'
@@ -504,15 +522,40 @@ class _MainScreenState extends State<MainScreen> {
               : null) ??
           (grobidData['title'] as String?) ??
           '';
-      _authorsCtrl.text = (openalexData['authors'] as String?) ?? (grobidData['authors'] as String?) ?? '';
-      _venueCtrl.text = (openalexData['venue'] as String?) ?? (grobidData['abstract']?.toString().split('\n').first ?? '');
-      _yearCtrl.text = (openalexData['year'] as String?) ?? (grobidData['year'] as String?) ?? '';
-      _doiCtrl.text = (openalexData['doi'] as String?) ?? ''; // <-- ĐỔ DỮ LIỆU DOI
-      
-      _problemCtrl.text = extraData['problem_statement']?.toString().isNotEmpty == true && extraData['problem_statement'] != 'Not Given' ? extraData['problem_statement'] : 'Not Given';
-      _keywordsCtrl.text = extraData['keywords']?.toString().isNotEmpty == true && extraData['keywords'] != 'Not Given' ? extraData['keywords'] : ((grobidData['keywords'] as String?) ?? 'Not Given');
-      _limitationCtrl.text = extraData['limitation']?.toString().isNotEmpty == true && extraData['limitation'] != 'Not Given' ? extraData['limitation'] : 'Not Given';
-      _datasetCtrl.text = extraData['dataset']?.toString().isNotEmpty == true && extraData['dataset'] != 'Not Given' ? extraData['dataset'] : 'Not Given';
+      _authorsCtrl.text =
+          (openalexData['authors'] as String?) ??
+          (grobidData['authors'] as String?) ??
+          '';
+      _venueCtrl.text =
+          (openalexData['venue'] as String?) ??
+          (grobidData['abstract']?.toString().split('\n').first ?? '');
+      _yearCtrl.text =
+          (openalexData['year'] as String?) ??
+          (grobidData['year'] as String?) ??
+          '';
+      _doiCtrl.text =
+          (openalexData['doi'] as String?) ?? ''; // <-- ĐỔ DỮ LIỆU DOI
+
+      _problemCtrl.text =
+          extraData['problem_statement']?.toString().isNotEmpty == true &&
+              extraData['problem_statement'] != 'Not Given'
+          ? extraData['problem_statement']
+          : 'Not Given';
+      _keywordsCtrl.text =
+          extraData['keywords']?.toString().isNotEmpty == true &&
+              extraData['keywords'] != 'Not Given'
+          ? extraData['keywords']
+          : ((grobidData['keywords'] as String?) ?? 'Not Given');
+      _limitationCtrl.text =
+          extraData['limitation']?.toString().isNotEmpty == true &&
+              extraData['limitation'] != 'Not Given'
+          ? extraData['limitation']
+          : 'Not Given';
+      _datasetCtrl.text =
+          extraData['dataset']?.toString().isNotEmpty == true &&
+              extraData['dataset'] != 'Not Given'
+          ? extraData['dataset']
+          : 'Not Given';
       _summaryCtrl.text = summary;
     });
 
@@ -622,8 +665,18 @@ class _MainScreenState extends State<MainScreen> {
       _showSettingsDialog(context);
       return false;
     }
-    final vaultDir = Directory(vaultPath);
-    if (!await vaultDir.exists()) {
+    final bool vaultExists;
+    try {
+      vaultExists = await Directory(vaultPath).exists();
+    } catch (e) {
+      debugPrint('_ensureVaultReady: directory check failed for "$vaultPath": $e');
+      _showUserMessage(
+        'Cannot access vault path. Use Settings → Browse to select the folder.',
+        isError: true,
+      );
+      return false;
+    }
+    if (!vaultExists) {
       _showUserMessage(
         'Vault folder not found. Use Settings → Browse to select it again.',
         isError: true,
@@ -642,7 +695,7 @@ class _MainScreenState extends State<MainScreen> {
         initialDirectory: vaultPath,
       );
       if (picked == null || picked.isEmpty) return false;
-      setState(() => vaultPath = picked);
+      setState(() => vaultPath = p.normalize(picked));
       await _saveSettings();
       if (await VaultAccess.canWriteToVault(vaultPath)) return true;
     }
@@ -753,7 +806,7 @@ ${_summaryCtrl.text}
       _loadVaultLibrary();
     } on FileSystemException catch (e) {
       _showUserMessage(
-        'Cannot write to vault (macOS sandbox?). Open Settings → Browse and re-select your Obsidian vault folder.\n\n$e',
+        'Cannot write to vault. Check folder permissions or re-select it in Settings → Browse.\n\n$e',
         isError: true,
       );
     } catch (e) {
@@ -873,10 +926,15 @@ ${_summaryCtrl.text}
                                 itemBuilder: (context, index) {
                                   final log = progressLogs[index];
                                   Color textColor = Colors.black87;
-                                  if (log.startsWith('✅') || log.startsWith('🎉')) textColor = Colors.green.shade700;
-                                  if (log.startsWith('⚠️')) textColor = Colors.orange.shade800;
-                                  if (log.startsWith('❌')) textColor = Colors.red.shade700;
-                                  if (log.startsWith('⏳')) textColor = primaryColor;
+                                  if (log.startsWith('✅') ||
+                                      log.startsWith('🎉'))
+                                    textColor = Colors.green.shade700;
+                                  if (log.startsWith('⚠️'))
+                                    textColor = Colors.orange.shade800;
+                                  if (log.startsWith('❌'))
+                                    textColor = Colors.red.shade700;
+                                  if (log.startsWith('⏳'))
+                                    textColor = primaryColor;
 
                                   return Padding(
                                     padding: const EdgeInsets.only(bottom: 6),
@@ -904,22 +962,28 @@ ${_summaryCtrl.text}
                                 width: double.infinity,
                                 child: OutlinedButton.icon(
                                   onPressed: _cancelExtraction,
-                                  icon: const Icon(Icons.stop_circle_outlined, size: 18),
+                                  icon: const Icon(
+                                    Icons.stop_circle_outlined,
+                                    size: 18,
+                                  ),
                                   label: const Text('Cancel'),
                                   style: OutlinedButton.styleFrom(
                                     foregroundColor: Colors.red.shade500,
-                                    side: BorderSide(color: Colors.red.shade200),
+                                    side: BorderSide(
+                                      color: Colors.red.shade200,
+                                    ),
                                   ),
                                 ),
                               ),
-                            ]
+                            ],
                           ],
                         ),
                       ),
                     ),
                     const SizedBox(height: 16),
                     FilledButton.icon(
-                      onPressed: (selectedPdf == null ||
+                      onPressed:
+                          (selectedPdf == null ||
                               isLoading ||
                               vaultPath.trim().isEmpty)
                           ? null
@@ -967,7 +1031,6 @@ ${_summaryCtrl.text}
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-
                     // THANH CÔNG CỤ PDF TOOLBAR (GIÚP ZOOM VÀ HOÀN TOÀN COPY ĐƯỢC CHỮ CHUYÊN NGHIỆP)
                     Container(
                       padding: const EdgeInsets.symmetric(
@@ -1152,10 +1215,14 @@ ${_summaryCtrl.text}
                                     maxLines: 2,
                                   ),
                                   Row(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
                                     children: [
                                       Expanded(
-                                        child: _buildTextField('Year', _yearCtrl),
+                                        child: _buildTextField(
+                                          'Year',
+                                          _yearCtrl,
+                                        ),
                                       ),
                                       const SizedBox(width: 12),
                                       Expanded(
@@ -1301,26 +1368,44 @@ ${_summaryCtrl.text}
                                       const Divider(height: 1),
                                       if (fullPdfText.isNotEmpty)
                                         Padding(
-                                          padding: const EdgeInsets.only(left: 12, right: 12, top: 12),
+                                          padding: const EdgeInsets.only(
+                                            left: 12,
+                                            right: 12,
+                                            top: 12,
+                                          ),
                                           child: SingleChildScrollView(
                                             scrollDirection: Axis.horizontal,
                                             child: Wrap(
                                               spacing: 8,
-                                              children: [
-                                                'Bài này có điểm gì novelty?',
-                                                'Research gap là gì?',
-                                                'Limitation là gì?',
-                                              ].map((suggestion) {
-                                                return ActionChip(
-                                                  label: Text(suggestion, style: const TextStyle(fontSize: 12)),
-                                                  backgroundColor: primaryColor.withOpacity(0.05),
-                                                  side: BorderSide(color: primaryColor.withOpacity(0.2)),
-                                                  onPressed: () {
-                                                    _chatInputCtrl.text = suggestion;
-                                                    _sendChatMessage();
-                                                  },
-                                                );
-                                              }).toList(),
+                                              children:
+                                                  [
+                                                    'Bài này có điểm gì novelty?',
+                                                    'Research gap là gì?',
+                                                    'Limitation là gì?',
+                                                  ].map((suggestion) {
+                                                    return ActionChip(
+                                                      label: Text(
+                                                        suggestion,
+                                                        style: const TextStyle(
+                                                          fontSize: 12,
+                                                        ),
+                                                      ),
+                                                      backgroundColor:
+                                                          primaryColor
+                                                              .withOpacity(
+                                                                0.05,
+                                                              ),
+                                                      side: BorderSide(
+                                                        color: primaryColor
+                                                            .withOpacity(0.2),
+                                                      ),
+                                                      onPressed: () {
+                                                        _chatInputCtrl.text =
+                                                            suggestion;
+                                                        _sendChatMessage();
+                                                      },
+                                                    );
+                                                  }).toList(),
                                             ),
                                           ),
                                         ),
@@ -1416,13 +1501,22 @@ ${_summaryCtrl.text}
                                           itemCount: paperCitations.length,
                                           itemBuilder: (context, index) {
                                             return ListTile(
-                                              contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                                              contentPadding:
+                                                  const EdgeInsets.symmetric(
+                                                    horizontal: 16,
+                                                    vertical: 4,
+                                                  ),
                                               leading: CircleAvatar(
                                                 radius: 14,
-                                                backgroundColor: primaryColor.withOpacity(0.1),
+                                                backgroundColor: primaryColor
+                                                    .withOpacity(0.1),
                                                 child: Text(
                                                   '${index + 1}',
-                                                  style: TextStyle(fontSize: 10, color: primaryColor, fontWeight: FontWeight.bold),
+                                                  style: TextStyle(
+                                                    fontSize: 10,
+                                                    color: primaryColor,
+                                                    fontWeight: FontWeight.bold,
+                                                  ),
                                                 ),
                                               ),
                                               title: Text(
@@ -1643,10 +1737,10 @@ ${_summaryCtrl.text}
                             onPressed: () async {
                               final path =
                                   await VaultAccess.pickVaultWithWriteAccess(
-                                initialDirectory: vCtrl.text.isNotEmpty
-                                    ? vCtrl.text
-                                    : null,
-                              );
+                                    initialDirectory: vCtrl.text.isNotEmpty
+                                        ? vCtrl.text
+                                        : null,
+                                  );
                               if (path == null || path.isEmpty) return;
                               if (!await VaultAccess.canWriteToVault(path)) {
                                 _showUserMessage(
@@ -1656,7 +1750,9 @@ ${_summaryCtrl.text}
                                 return;
                               }
                               vCtrl.text = path;
-                              _showUserMessage('Vault folder OK (write access granted).');
+                              _showUserMessage(
+                                'Vault folder OK (write access granted).',
+                              );
                             },
                           )
                         : null,
@@ -1687,11 +1783,11 @@ ${_summaryCtrl.text}
           ),
           FilledButton(
             onPressed: () async {
-              final newVault = vCtrl.text.trim();
+              final newVault = p.normalize(vCtrl.text.trim());
               if (newVault.isNotEmpty &&
                   !await VaultAccess.canWriteToVault(newVault)) {
                 _showUserMessage(
-                  'Cannot write to vault. Use Browse to select the folder (macOS sandbox).',
+                  'Cannot write to this folder. Check that the path exists and you have write permission.',
                   isError: true,
                 );
                 return;

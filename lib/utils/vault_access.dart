@@ -12,17 +12,47 @@ class VaultAccess {
       !kIsWeb && (Platform.isMacOS || Platform.isIOS);
 
   static Future<bool> canWriteToVault(String vaultPath) async {
-    if (vaultPath.trim().isEmpty) return false;
+    if (kIsWeb) return false;
+    if (vaultPath.trim().isEmpty || vaultPath.trim() == '.') return false;
     try {
-      final papers = Directory(p.join(vaultPath, 'Papers'));
-      if (!await papers.exists()) {
-        await papers.create(recursive: true);
+      // Normalize path for cross-platform compatibility (fixes Windows namespace issues)
+      final normalizedPath = p.normalize(vaultPath);
+
+      // Reject relative paths and current directory
+      if (normalizedPath.isEmpty || normalizedPath == '.') return false;
+
+      // Ensure vault root directory exists first
+      final vaultDir = Directory(normalizedPath);
+      if (!await vaultDir.exists()) {
+        await vaultDir.create(recursive: true);
       }
-      final probe = File(p.join(papers.path, '.write_probe'));
-      await probe.writeAsString('ok', flush: true);
-      await probe.delete();
+
+      final foldersToTest = [
+        'Papers',
+        'Authors',
+        'Tags',
+        'Datasets',
+        'Years',
+        'Venues',
+      ];
+
+      for (final folderName in foldersToTest) {
+        final folder = Directory(p.join(normalizedPath, folderName));
+        if (!await folder.exists()) {
+          await folder.create(recursive: true);
+        }
+
+        // Probe test on Papers and Tags folders to catch permission issues
+        // on both primary docs and metadata folders (covers existing read-only edge case)
+        if (folderName == 'Papers' || folderName == 'Tags') {
+          final probe = File(p.join(folder.path, '_write_probe_'));
+          await probe.writeAsString('ok', flush: true);
+          await probe.delete();
+        }
+      }
       return true;
-    } catch (_) {
+    } catch (e) {
+      debugPrint('VaultAccess: canWriteToVault failed for "$vaultPath": $e');
       return false;
     }
   }

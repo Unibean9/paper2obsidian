@@ -47,33 +47,29 @@ class BedrockConfig {
 
   /// Priority: `--dart-define` > `.env` > defaults (no secrets in source).
   static BedrockConfig fromEnvironment() {
-    const define = String.fromEnvironment;
-
-    String pick(String defineKey, String envKey, String fallback) {
-      final fromDefine = define(defineKey);
-      if (fromDefine.isNotEmpty) return fromDefine;
-      return EnvConfig.get(envKey) ?? fallback;
-    }
-
-    final sessionFromDefine = define('AWS_SESSION_TOKEN');
-    final sessionFromEnv = EnvConfig.get('AWS_SESSION_TOKEN');
+    const regionDefine = String.fromEnvironment('AWS_REGION');
+    const modelIdDefine = String.fromEnvironment('BEDROCK_MODEL_ID');
+    const accessKeyDefine = String.fromEnvironment('AWS_ACCESS_KEY_ID');
+    const secretKeyDefine = String.fromEnvironment('AWS_SECRET_ACCESS_KEY');
+    const sessionTokenDefine = String.fromEnvironment('AWS_SESSION_TOKEN');
 
     return BedrockConfig.sanitized(
-      region: pick('AWS_REGION', 'AWS_REGION', 'us-east-1'),
-      modelId: pick(
-        'BEDROCK_MODEL_ID',
-        'BEDROCK_MODEL_ID',
-        'anthropic.claude-3-5-sonnet-20240620-v2:0',
-      ),
-      accessKeyId: pick('AWS_ACCESS_KEY_ID', 'AWS_ACCESS_KEY_ID', ''),
-      secretAccessKey: pick(
-        'AWS_SECRET_ACCESS_KEY',
-        'AWS_SECRET_ACCESS_KEY',
-        '',
-      ),
-      sessionToken: sessionFromDefine.isNotEmpty
-          ? sessionFromDefine
-          : sessionFromEnv,
+      region: regionDefine.isNotEmpty
+          ? regionDefine
+          : (EnvConfig.get('AWS_REGION') ?? 'us-east-1'),
+      modelId: modelIdDefine.isNotEmpty
+          ? modelIdDefine
+          : (EnvConfig.get('BEDROCK_MODEL_ID') ??
+              'anthropic.claude-3-5-sonnet-20240620-v2:0'),
+      accessKeyId: accessKeyDefine.isNotEmpty
+          ? accessKeyDefine
+          : (EnvConfig.get('AWS_ACCESS_KEY_ID') ?? ''),
+      secretAccessKey: secretKeyDefine.isNotEmpty
+          ? secretKeyDefine
+          : (EnvConfig.get('AWS_SECRET_ACCESS_KEY') ?? ''),
+      sessionToken: sessionTokenDefine.isNotEmpty
+          ? sessionTokenDefine
+          : EnvConfig.get('AWS_SESSION_TOKEN'),
     );
   }
 }

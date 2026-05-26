@@ -103,3 +103,9 @@ packages/
 
 # Others
 docs/*
+**/settings.local.json
+.claude/artifacts/*.md
+plans/*
+.claude/*
+.ck.json
+.mcp.json

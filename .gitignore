@@ -18,16 +18,17 @@ migrate_working_dir/
 *.iws
 .idea/
 
-# The .vscode folder contains launch configuration and tasks you configure in
-# VS Code which you may wish to be included in version control, so this line
-# is commented out by default.
+# VS Code settings (optional - uncomment if you want to ignore)
 #.vscode/
 
 # Flutter/Dart/Pub related
 **/doc/api/
 **/ios/Flutter/.last_build_id
 .dart_tool/
+.flutter-plugins
 .flutter-plugins-dependencies
+.fvm/
+.fvmrc
 .pub-cache/
 .pub/
 /build/
@@ -39,11 +40,63 @@ app.*.symbols
 # Obfuscation related
 app.*.map.json
 
-# Local AWS credentials (optional local config file)
-.env
-bedrock.local.json
-
-# Android Studio will place build artifacts here
+# Android specific
 /android/app/debug
 /android/app/profile
 /android/app/release
+/android/app/.gradle
+/android/.gradle
+/android/local.properties
+/android/gradle.properties
+
+# iOS specific
+/ios/Pods/
+/ios/.symlinks/
+/ios/Flutter/Flutter.framework
+/ios/Flutter/Flutter.podspec
+
+# macOS specific
+/macos/Pods/
+/macos/.symlinks/
+/macos/Flutter/Flutter-Release.xcconfig
+/macos/Flutter/GeneratedPluginRegistrant.swift
+
+# Windows specific
+windows/flutter/generated_plugins.cmake
+windows/flutter/generated_plugin_registrant.cc
+windows/flutter/generated_plugin_registrant.h
+windows/flutter/generated_plugins/
+
+# Linux specific
+linux/flutter/generated_plugins.cmake
+linux/flutter/generated_plugin_registrant.cc
+linux/flutter/generated_plugin_registrant.h
+
+# Web specific
+web/plugins/
+web/.dart_tool/
+
+# Local environment and configuration files
+.env
+.env.local
+.env.*.local
+bedrock.local.json
+
+# OS specific
+Thumbs.db
+.DS_Store
+desktop.ini
+
+# Dependency directories
+pubspec.lock
+
+# Test coverage
+/coverage/
+
+# Running app packages
+packages/
+.packages
+*.o
+*.so
+*.so.*
+*.dylib

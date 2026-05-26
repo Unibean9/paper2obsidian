@@ -12,6 +12,7 @@ import 'config/env_config.dart';
 import 'services/api_service.dart';
 import 'services/bedrock_client.dart';
 import 'utils/desktop_file_helper.dart';
+import 'utils/title_inference.dart';
 import 'utils/vault_access.dart';
 
 Future<void> main() async {
@@ -375,18 +376,24 @@ class _MainScreenState extends State<MainScreen> {
         if (foundTitle.isNotEmpty) {
           _addLog('✅ Grobid success: Found Title & ${grobidData['authors'].toString().split(';').length} authors.');
         } else {
-          _addLog('⚠️ Grobid parsed but title is empty.');
+          _addLog('ℹ️ Grobid: no title in PDF structure (will infer from text).');
         }
       } catch (e) {
-        _addLog('⚠️ Grobid failed, using fallback mode.');
+        _addLog('ℹ️ Grobid unavailable — continuing with text/Bedrock only.');
         grobidData = {'title': '', 'authors': '', 'year': ''};
       }
 
-      final grobidTitle = grobidData['title']?.toString().trim() ?? '';
-      if (grobidTitle.isEmpty && selectedPdf != null) {
-        final fallbackTitle = p.basenameWithoutExtension(selectedPdf!.path);
-        grobidData['title'] = fallbackTitle;
-        _addLog('ℹ️ Using PDF filename as title: $fallbackTitle');
+      final pdfBase = selectedPdf != null
+          ? p.basenameWithoutExtension(selectedPdf!.path)
+          : '';
+      final searchTitle = TitleInference.resolve(
+        grobidTitle: grobidData['title']?.toString() ?? '',
+        firstPageText: firstPageText,
+        pdfBasenameWithoutExt: pdfBase,
+      );
+      grobidData['title'] = searchTitle;
+      if ((grobidData['title']?.toString().trim() ?? '').isNotEmpty) {
+        _addLog('ℹ️ Title for search: $searchTitle');
       }
 
       if (!mounted || _isCancelled) return;
@@ -394,20 +401,24 @@ class _MainScreenState extends State<MainScreen> {
       // --- STEP 3: OPENALEX ---
       _addLog('⏳ Step 3/4: Fetching precise OpenAlex metadata...');
       Map<String, dynamic> openalexData = {};
-      if (grobidData['title']?.toString().isNotEmpty ?? false) {
+      if (searchTitle.isNotEmpty &&
+          !TitleInference.looksLikeFilename(searchTitle)) {
         try {
-          openalexData = await researchApiService.fetchOpenAlexMetadata(grobidData['title'] ?? '');
-          if (openalexData.isNotEmpty && openalexData['doi'] != null) {
+          openalexData =
+              await researchApiService.fetchOpenAlexMetadata(searchTitle);
+          if (openalexData.isNotEmpty &&
+              (openalexData['doi']?.toString() ?? '').isNotEmpty &&
+              openalexData['doi'] != 'Not Given') {
             _addLog('✅ OpenAlex success: Found DOI (${openalexData['doi']}) and Venue.');
           } else {
-            _addLog('⚠️ OpenAlex: No exact match found online.');
+            _addLog('ℹ️ OpenAlex: no match for this title (non-academic PDF is OK).');
           }
         } catch (e) {
-          _addLog('⚠️ OpenAlex error, continuing without online verification.');
+          _addLog('ℹ️ OpenAlex skipped: $e');
           openalexData = {};
         }
       } else {
-         _addLog('⏩ Skipped OpenAlex (No title from Grobid).');
+        _addLog('ℹ️ OpenAlex skipped (title not suitable for academic search).');
       }
 
       if (!mounted || _isCancelled) return;
@@ -423,6 +434,29 @@ class _MainScreenState extends State<MainScreen> {
         summary = result.summary;
         extraData = result.extraData;
         _addLog('✅ Bedrock success: Extracted extra details.');
+
+        // Retry OpenAlex if Bedrock found a better title
+        final bedrockTitle = extraData['title']?.toString().trim() ?? '';
+        if (openalexData.isEmpty &&
+            bedrockTitle.isNotEmpty &&
+            bedrockTitle != 'Not Given' &&
+            !TitleInference.looksLikeFilename(bedrockTitle)) {
+          _addLog('ℹ️ Retrying OpenAlex with Bedrock title…');
+          try {
+            final retry = await researchApiService.fetchOpenAlexMetadata(
+              bedrockTitle,
+            );
+            if (retry.isNotEmpty &&
+                (retry['doi']?.toString() ?? '').isNotEmpty &&
+                retry['doi'] != 'Not Given') {
+              openalexData = retry;
+              grobidData['title'] = bedrockTitle;
+              _addLog('✅ OpenAlex matched after Bedrock title.');
+            }
+          } catch (_) {}
+        } else if (bedrockTitle.isNotEmpty && bedrockTitle != 'Not Given') {
+          grobidData['title'] = bedrockTitle;
+        }
       } catch (e) {
         _addLog('⚠️ Bedrock error: $e');
       }
@@ -461,7 +495,15 @@ class _MainScreenState extends State<MainScreen> {
     if (!mounted) return;
 
     setState(() {
-      _titleCtrl.text = (openalexData['title'] as String?) ?? (grobidData['title'] as String?) ?? '';
+      final bedrockTitle = extraData['title']?.toString();
+      _titleCtrl.text = (openalexData['title'] as String?) ??
+          (bedrockTitle != null &&
+                  bedrockTitle.isNotEmpty &&
+                  bedrockTitle != 'Not Given'
+              ? bedrockTitle
+              : null) ??
+          (grobidData['title'] as String?) ??
+          '';
       _authorsCtrl.text = (openalexData['authors'] as String?) ?? (grobidData['authors'] as String?) ?? '';
       _venueCtrl.text = (openalexData['venue'] as String?) ?? (grobidData['abstract']?.toString().split('\n').first ?? '');
       _yearCtrl.text = (openalexData['year'] as String?) ?? (grobidData['year'] as String?) ?? '';

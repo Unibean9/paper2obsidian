@@ -185,7 +185,8 @@ class ResearchApiService {
 
     const systemPrompt =
         'You are a research assistant. Extract metadata from the paper text. '
-        'Return ONLY valid JSON with keys: dataset (comma-separated dataset names, no "and"), '
+        'Return ONLY valid JSON with keys: title (paper title as printed), '
+        'dataset (comma-separated dataset names, no "and"), '
         'problem_statement, limitation, keywords (comma-separated), summary. '
         'Use "Not Given" when unavailable.';
 

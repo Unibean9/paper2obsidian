@@ -18,10 +18,6 @@ class ResearchApiService {
     http.Client? httpClient,
   }) : httpClient = httpClient ?? http.Client();
 
-  // =========================================================================
-  // 1. GROBID INTEGRATION - PDF Structure Parsing
-  // =========================================================================
-
   /// Sends PDF to Grobid server and returns structured TEI XML
   /// Returns XML string containing metadata like title, authors, abstract
   /// Throws exception if Grobid service unavailable or processing fails
@@ -74,10 +70,7 @@ class ResearchApiService {
     }
   }
 
-  // =========================================================================
-  // 2. OPENIALEX INTEGRATION - Metadata Retrieval
-  // =========================================================================
-
+  /// Fetches metadata from OpenAlex API.
   Future<Map<String, dynamic>> fetchOpenAlexMetadata(String title) async {
     if (title.trim().isEmpty) {
       return {};
@@ -148,10 +141,7 @@ class ResearchApiService {
     }
   }
 
-  // =========================================================================
-  // 3. AWS BEDROCK - Summarization, metadata extraction & RAG chat
-  // =========================================================================
-
+  /// AWS Bedrock for summarization, metadata extraction, and RAG chat.
   static String _limitText(String text, int maxChars) {
     if (text.length <= maxChars) return text;
     return '${text.substring(0, maxChars)}...';
@@ -193,8 +183,7 @@ class ResearchApiService {
     try {
       final content = await bedrockClient.converse(
         systemPrompt: systemPrompt,
-        userMessage:
-            'Text from paper:\n${_limitText(pdfText, 8000)}',
+        userMessage: 'Text from paper:\n${_limitText(pdfText, 8000)}',
         temperature: temperature,
         maxTokens: 2048,
       );

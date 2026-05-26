@@ -26,18 +26,20 @@ class EnvConfig {
     _values.clear();
     _loadedFrom = null;
 
-    // 1) Bundled with app at build time (primary)
+    /// Try loading from bundled asset (primary source).
     try {
       final content = await rootBundle.loadString(assetPath);
       _parse(content);
       _loadedFrom = 'asset:$assetPath';
     } catch (e) {
       if (kDebugMode) {
-        debugPrint('Env: bundled $assetPath not found ($e). Trying project file…');
+        debugPrint(
+          'Env: bundled $assetPath not found ($e). Trying project file…',
+        );
       }
     }
 
-    // 2) Dev fallback: project-root `.env` when running `flutter run` from repo
+    /// Try loading from project-root `.env` file (fallback for development).
     if (!hasAwsCredentials && !kIsWeb) {
       final projectFile = await _findProjectEnvFile();
       if (projectFile != null) {
@@ -45,7 +47,8 @@ class EnvConfig {
           _parse(await projectFile.readAsString());
           _loadedFrom = projectFile.path;
         } on IOException catch (e) {
-          if (kDebugMode) debugPrint('Env: could not read ${projectFile.path}: $e');
+          if (kDebugMode)
+            debugPrint('Env: could not read ${projectFile.path}: $e');
         }
       }
     }

@@ -100,3 +100,6 @@ packages/
 *.so
 *.so.*
 *.dylib
+
+# Others
+docs/*

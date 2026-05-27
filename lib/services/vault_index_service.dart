@@ -40,7 +40,8 @@ class ChunkRecord {
     final raw = (json['embedding'] as List<dynamic>)
         .map((e) => (e as num).toDouble())
         .toList();
-    if (raw.length != 1024) {
+    // Allow empty embeddings (BM25-only chunks stored when AWS is unconfigured).
+    if (raw.isNotEmpty && raw.length != 1024) {
       throw FormatException(
         'ChunkRecord: expected 1024-dim embedding, got ${raw.length} '
         '(id: ${json['id']}). Index may be from a different model — rebuild.',
@@ -237,7 +238,14 @@ class VaultIndexService {
 
     try {
       final queryVec = await bedrockClient.embed(question);
-      final scored = _chunks
+      // Only cosine-score chunks that have a real embedding vector.
+      // BM25-only chunks (empty embedding) are excluded from the semantic path
+      // but remain searchable via the BM25 fallback.
+      final embeddable = _chunks.where((c) => c.embedding.isNotEmpty).toList();
+      if (embeddable.isEmpty) {
+        return _bm25Query(question, topK: topK);
+      }
+      final scored = embeddable
           .map((c) => _Scored(dotProduct(queryVec, c.embedding), c))
           .toList()
         ..sort((a, b) => b.score.compareTo(a.score));
@@ -297,15 +305,18 @@ class VaultIndexService {
         continue;
       }
 
+      // Always store the chunk so BM25 can search it.
+      // Embedding is optional — only needed for semantic (cosine) search.
+      List<double> embedding = [];
       try {
-        final embedding = await bedrockClient.embed(section.text);
-        records.add(ChunkRecord(
-          id: '${paperTitle}_${i}_${section.heading.hashCode.abs()}',
-          paperTitle: paperTitle,
-          section: section.heading,
-          text: section.text,
-          embedding: embedding,
-        ));
+        embedding = await bedrockClient.embed(section.text);
+      } on BedrockUnconfiguredException {
+        // AWS not configured — store chunk with empty embedding; BM25 still works.
+        AppLogger.log(
+          'VaultIndexService: AWS unconfigured — storing "$paperTitle/'
+          '${section.heading}" as BM25-only chunk',
+          category: LogCategory.network,
+        );
       } catch (e) {
         AppLogger.log(
           'VaultIndexService: embed failed "$paperTitle/${section.heading}"',
@@ -313,6 +324,13 @@ class VaultIndexService {
           error: e,
         );
       }
+      records.add(ChunkRecord(
+        id: '${paperTitle}_${i}_${section.heading.hashCode.abs()}',
+        paperTitle: paperTitle,
+        section: section.heading,
+        text: section.text,
+        embedding: embedding,
+      ));
     }
     return records;
   }
@@ -403,9 +421,12 @@ class VaultIndexService {
 
     final indexPath = _indexPath(vaultPath);
     final tmp = File('$indexPath.tmp');
+    // Use 0 when all chunks are BM25-only (no embeddings) so loadIndex does
+    // not reject the file with a dimension-mismatch error on next startup.
+    final hasSemantic = _chunks.any((c) => c.embedding.isNotEmpty);
     await tmp.writeAsString(jsonEncode({
       'version': 1,
-      'embeddingDimensions': 1024,
+      'embeddingDimensions': hasSemantic ? 1024 : 0,
       'paperCount': paperCount,
       'chunks': _chunks.map((c) => c.toJson()).toList(),
     }));

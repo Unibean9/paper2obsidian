@@ -14,9 +14,12 @@ class PanelContainer extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // The outer Container paints the white background, rounded corners, and shadow.
+    // The inner Material(transparent) provides a proper Material surface so that
+    // any ListTile / InkWell descendant can paint its ink splash correctly.
+    // Without this, ListTile's ink splash would be hidden behind the DecoratedBox.
     return Container(
       clipBehavior: Clip.antiAlias,
-      padding: padding,
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(20),
@@ -28,7 +31,13 @@ class PanelContainer extends StatelessWidget {
           ),
         ],
       ),
-      child: child,
+      child: Material(
+        color: Colors.transparent,
+        child: Padding(
+          padding: padding,
+          child: child,
+        ),
+      ),
     );
   }
 }

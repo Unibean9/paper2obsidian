@@ -69,7 +69,8 @@ class _MainScreenState extends State<MainScreen> {
   late PaperController _paperController;
 
   // GlobalKey for triggering LibraryTab refresh after save
-  final GlobalKey<LibraryTabState> _libraryTabKey = GlobalKey<LibraryTabState>();
+  final GlobalKey<LibraryTabState> _libraryTabKey =
+      GlobalKey<LibraryTabState>();
 
   @override
   void initState() {
@@ -178,15 +179,15 @@ class _MainScreenState extends State<MainScreen> {
   }
 
   void _onChatMessagesChanged(List<Map<String, dynamic>> messages) {
-    final key = _currentPaperPath ?? _globalChatKey;
-    _chatHistory[key] = List.from(messages);
+    _chatHistory[_globalChatKey] = List.from(messages);
     _saveChatHistory(); // fire-and-forget
   }
 
   Future<void> _saveSettings() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('vaultPath', vaultPath);
-    if (!mounted) return; // ← guard before ScaffoldMessenger to prevent use-after-dispose crash
+    if (!mounted)
+      return; // ← guard before ScaffoldMessenger to prevent use-after-dispose crash
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(AppMessages.get(MessageKey.statusSettingsSaved))),
     );
@@ -357,21 +358,28 @@ class _MainScreenState extends State<MainScreen> {
     if (selectedPdf == null) return;
     setState(() => _paperStatus = PaperStatus.extracting);
     try {
-      final PaperMetadata meta = await _paperController.processPdf(selectedPdf!);
+      final PaperMetadata meta = await _paperController.processPdf(
+        selectedPdf!,
+      );
       // Guard against cancel — processPdf returns empty when isCancelled.
       if (mounted && !_paperController.isCancelled) {
         _applyMetadata(meta);
         if (mounted) setState(() => _paperStatus = PaperStatus.done);
       }
     } catch (e) {
-      AppLogger.log('PDF extraction failed', category: LogCategory.parse, error: e);
+      AppLogger.log(
+        'PDF extraction failed',
+        category: LogCategory.parse,
+        error: e,
+      );
       _addLog(AppMessages.errorPdfExtraction(e));
       if (mounted) setState(() => _paperStatus = PaperStatus.error);
     } finally {
       if (mounted && _paperController.isCancelled) {
         setState(
-          () => _paperStatus =
-              selectedPdf != null ? PaperStatus.uploaded : PaperStatus.idle,
+          () => _paperStatus = selectedPdf != null
+              ? PaperStatus.uploaded
+              : PaperStatus.idle,
         );
       }
     }
@@ -457,16 +465,11 @@ class _MainScreenState extends State<MainScreen> {
   Future<void> _openPaperFromLibrary(String mdPath) async {
     final normalizedPath = p.normalize(mdPath);
 
-    // ── Snapshot ordering rule (Phase 2) ──────────────────────────────────
-    // _chatHistory[_currentPaperPath] is kept in sync by _onChatMessagesChanged,
-    // so it already holds the latest messages. Updating _currentPaperPath in the
-    // same setState below triggers ChatTab to rebuild with ValueKey(normalizedPath),
-    // seeding from _chatHistory[normalizedPath]. The snapshot is already in the map.
-
     setState(() {
       isLoading = true;
       progressLogs.clear();
-      // Key change happens here — ChatTab rebuilds with new ValueKey after setState.
+      // Store the current paper path for context (used in RAG scope selector,
+      // not for chat isolation). Chat history is global and shared across all papers.
       _currentPaperPath = normalizedPath;
       // Library papers are already processed; enable "Save to Obsidian".
       _paperStatus = PaperStatus.done;
@@ -474,8 +477,9 @@ class _MainScreenState extends State<MainScreen> {
     _addLog(AppMessages.statusLoadingPaper(p.basename(mdPath)));
 
     try {
-      final PaperMetadata meta =
-          await _paperController.openPaperFromLibrary(mdPath);
+      final PaperMetadata meta = await _paperController.openPaperFromLibrary(
+        mdPath,
+      );
       if (mounted) {
         _applyMetadata(meta);
       }
@@ -513,16 +517,28 @@ class _MainScreenState extends State<MainScreen> {
         if (mounted) setState(() => _indexStale = true);
       }
     } catch (e) {
-      AppLogger.log('_checkStaleness failed', category: LogCategory.other, error: e);
+      AppLogger.log(
+        '_checkStaleness failed',
+        category: LogCategory.other,
+        error: e,
+      );
     }
   }
 
   Future<void> _rebuildIndex() async {
     try {
       await _vaultIndexService.indexVault(vaultPath);
-      if (mounted) setState(() { _indexStale = false; _indexRevision++; });
+      if (mounted)
+        setState(() {
+          _indexStale = false;
+          _indexRevision++;
+        });
     } catch (e) {
-      AppLogger.log('Vault reindex failed', category: LogCategory.other, error: e);
+      AppLogger.log(
+        'Vault reindex failed',
+        category: LogCategory.other,
+        error: e,
+      );
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -671,17 +687,15 @@ class _MainScreenState extends State<MainScreen> {
                               summaryCtrl: _summaryCtrl,
                             ),
                             ChatTab(
-                              key: ValueKey(_currentPaperPath),
                               vaultIndexService: _vaultIndexService,
                               bedrockClient: _bedrockClient,
                               primaryColor: primaryColor,
-                              showStaleBanner:
-                                  _indexStale && !_bannerDismissed,
+                              showStaleBanner: _indexStale && !_bannerDismissed,
                               onRebuildIndex: _rebuildIndex,
-                              onDismissBanner: () => setState(
-                                  () => _bannerDismissed = true),
+                              onDismissBanner: () =>
+                                  setState(() => _bannerDismissed = true),
                               initialMessages: List.from(
-                                _chatHistory[_currentPaperPath ?? _globalChatKey] ?? [],
+                                _chatHistory[_globalChatKey] ?? [],
                               ),
                               onMessagesChanged: _onChatMessagesChanged,
                               // onCitationsUpdated intentionally not wired:

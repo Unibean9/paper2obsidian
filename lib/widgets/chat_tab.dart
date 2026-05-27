@@ -76,6 +76,12 @@ class _ChatTabState extends State<ChatTab> with AutomaticKeepAliveClientMixin {
         _availablePapers = widget.vaultIndexService.getIndexedPaperTitles();
       });
     }
+    // Reload messages if parent reinitializes (e.g., paper context change)
+    if (widget.initialMessages != oldWidget.initialMessages) {
+      setState(() {
+        _messages = List.from(widget.initialMessages);
+      });
+    }
   }
 
   @override

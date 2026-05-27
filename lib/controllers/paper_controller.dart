@@ -564,8 +564,9 @@ ${meta.summary}
     onLog(AppMessages.statusPdfFound(p.basename(pdfFile.path)));
 
     // Re-extract text for Chat RAG context.
+    // Use async read to avoid blocking the Flutter UI thread (fix: was readAsBytesSync).
     final PdfDocument document = PdfDocument(
-      inputBytes: pdfFile.readAsBytesSync(),
+      inputBytes: await pdfFile.readAsBytes(),
     );
     final int maxPages =
         document.pages.count > 10 ? 10 : document.pages.count;
@@ -574,18 +575,80 @@ ${meta.summary}
     ).extractText(startPageIndex: 0, endPageIndex: maxPages - 1);
     document.dispose();
 
-    // Parse basic fields from YAML frontmatter.
+    // ── Locate YAML frontmatter block (CRLF-safe) ────────────────────────────
+    //
+    // Standard YAML frontmatter: opening `---` on line 1, closing `---` on its
+    // own line. On Windows, VS Code and git (autocrlf=true) write CRLF endings,
+    // so the closing fence may be `\r\n---\r\n` instead of `\n---\n`.
+    // Search for the closing fence starting after the opening `---` (offset 3).
+    final RegExpMatch? closeFenceMatch =
+        RegExp(r'(?:\r?\n)---(?:\r?\n|$)').firstMatch(content.substring(3));
+    final int yamlEnd =
+        closeFenceMatch != null ? closeFenceMatch.start + 3 : -1;
+    final String yamlBlock =
+        yamlEnd > 0 ? content.substring(0, yamlEnd) : content;
+
+    // ── Parse YAML frontmatter fields (all scoped to yamlBlock) ──────────────
+
     final RegExpMatch? doiMatch =
-        RegExp(r'doi:\s*"(.*?)"').firstMatch(content);
+        RegExp(r'doi:\s*"(.*?)"').firstMatch(yamlBlock);
     final String doi = doiMatch?.group(1) ?? '';
+
+    // year: "[[Years/YYYY]]"
+    final RegExpMatch? yearMatch =
+        RegExp(r'year:\s*"\[\[Years/(.*?)\]\]"').firstMatch(yamlBlock);
+    final String year = yearMatch?.group(1) ?? '';
+
+    // venue: "[[Venues/NAME]]"
+    final RegExpMatch? venueMatch =
+        RegExp(r'venue:\s*"\[\[Venues/(.*?)\]\]"').firstMatch(yamlBlock);
+    final String venue = venueMatch?.group(1) ?? '';
+
+    // authors YAML list:  - "[[Authors/Name]]"  (one per line, frontmatter only)
+    final List<String> authorList = RegExp(r'"?\[\[Authors/(.*?)\]\]"?')
+        .allMatches(yamlBlock)
+        .map((m) => m.group(1)!)
+        .toList();
+    final String authors = authorList.join(', ');
+
+    // keywords YAML list: - "[[Tags/kw]]"  (frontmatter only)
+    final List<String> keywordList = RegExp(r'"?\[\[Tags/(.*?)\]\]"?')
+        .allMatches(yamlBlock)
+        .map((m) => m.group(1)!)
+        .toList();
+    final String keywords = keywordList.join(', ');
+
+    // ── Parse body sections ───────────────────────────────────────────────────
 
     final RegExpMatch? summaryMatch =
         RegExp(r'## 1\. Summary\n([\s\S]*?)\n## 2\.').firstMatch(content);
     final String summary = summaryMatch?.group(1)?.trim() ?? '';
 
+    // **Problem Statement:** value (single line)
+    final RegExpMatch? problemMatch =
+        RegExp(r'\*\*Problem Statement:\*\*\s*(.+)').firstMatch(content);
+    final String problemStatement = problemMatch?.group(1)?.trim() ?? '';
+
+    // **Dataset Detail:** value (single line) — original field name in template
+    final RegExpMatch? datasetMatch =
+        RegExp(r'\*\*Dataset Detail:\*\*\s*(.+)').firstMatch(content);
+    final String dataset = datasetMatch?.group(1)?.trim() ?? '';
+
+    // **Limitations:** value (single line)
+    final RegExpMatch? limitationMatch =
+        RegExp(r'\*\*Limitations:\*\*\s*(.+)').firstMatch(content);
+    final String limitation = limitationMatch?.group(1)?.trim() ?? '';
+
     return PaperMetadata(
       title: p.basenameWithoutExtension(mdPath),
+      authors: authors,
+      venue: venue,
+      year: year,
       doi: doi,
+      keywords: keywords,
+      dataset: dataset,
+      problemStatement: problemStatement,
+      limitation: limitation,
       summary: summary,
       fullPdfText: fullPdfText,
       resolvedPdf: pdfFile,

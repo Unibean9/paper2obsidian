@@ -57,7 +57,12 @@ class _MainScreenState extends State<MainScreen> {
   /// key in [_chatHistory]. Null when no library paper is open.
   String? _currentPaperPath;
 
-  /// Per-paper chat message threads keyed by normalized md-file path.
+  /// Sentinel key used in [_chatHistory] when no library paper is open.
+  /// Must not be a valid OS path (no separator, no drive letter).
+  static const String _globalChatKey = '__global__';
+
+  /// Per-paper chat message threads keyed by normalized md-file path,
+  /// or [_globalChatKey] for the vault-wide chat when no paper is open.
   /// Value type is `Map<String, dynamic>` (not String) so Phase 3 can
   /// store a `sources` key alongside `role` and `content`.
   final Map<String, List<Map<String, dynamic>>> _chatHistory = {};
@@ -207,8 +212,8 @@ class _MainScreenState extends State<MainScreen> {
   /// Keeps [_chatHistory] in sync with every message add inside the tab,
   /// then persists asynchronously. Always copies the list to avoid aliasing.
   void _onChatMessagesChanged(List<Map<String, dynamic>> messages) {
-    if (_currentPaperPath == null) return;
-    _chatHistory[_currentPaperPath!] = List.from(messages);
+    final key = _currentPaperPath ?? _globalChatKey;
+    _chatHistory[key] = List.from(messages);
     _saveChatHistory(); // fire-and-forget
   }
 
@@ -765,11 +770,9 @@ class _MainScreenState extends State<MainScreen> {
                               onRebuildIndex: _rebuildIndex,
                               onDismissBanner: () => setState(
                                   () => _bannerDismissed = true),
-                              initialMessages: _currentPaperPath != null
-                                  ? List.from(
-                                      _chatHistory[_currentPaperPath] ?? [],
-                                    )
-                                  : const [],
+                              initialMessages: List.from(
+                                _chatHistory[_currentPaperPath ?? _globalChatKey] ?? [],
+                              ),
                               onMessagesChanged: _onChatMessagesChanged,
                             ),
 

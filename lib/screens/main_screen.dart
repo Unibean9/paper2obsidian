@@ -71,6 +71,11 @@ class _MainScreenState extends State<MainScreen> {
   bool _indexStale = false;
   bool _bannerDismissed = false;
 
+  /// Incremented each time a background vault index update completes
+  /// (indexPaper after save, or indexVault from Settings).
+  /// Passed to [ChatTab] so it can refresh [_availablePapers] automatically.
+  int _indexRevision = 0;
+
   // Holds the last extracted abstract so it survives through to saveToObsidian.
   // Not shown in the form (read-only pipeline output).
   String _paperAbstract = '';
@@ -116,7 +121,12 @@ class _MainScreenState extends State<MainScreen> {
       vaultIndexService: _vaultIndexService,
       onIndexingStatus: (msg) {
         if (!mounted) return;
-        setState(() => statusText = msg ?? AppMessages.get(MessageKey.statusReady));
+        setState(() {
+          statusText = msg ?? AppMessages.get(MessageKey.statusReady);
+          // msg == null means background indexPaper completed — bump revision
+          // so ChatTab.didUpdateWidget refreshes _availablePapers automatically.
+          if (msg == null) _indexRevision++;
+        });
       },
     );
     _loadSettings();
@@ -574,7 +584,7 @@ class _MainScreenState extends State<MainScreen> {
   Future<void> _rebuildIndex() async {
     try {
       await _vaultIndexService.indexVault(vaultPath);
-      if (mounted) setState(() => _indexStale = false);
+      if (mounted) setState(() { _indexStale = false; _indexRevision++; });
     } catch (e) {
       AppLogger.log('Vault reindex failed', category: LogCategory.other, error: e);
       if (mounted) {
@@ -778,6 +788,7 @@ class _MainScreenState extends State<MainScreen> {
                                 if (!mounted) return;
                                 setState(() => paperCitations = citations);
                               },
+                              indexRevision: _indexRevision,
                             ),
 
                             // TAB 3: CITATIONS SCREEN

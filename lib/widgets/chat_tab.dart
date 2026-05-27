@@ -24,6 +24,7 @@ class ChatTab extends StatefulWidget {
     this.initialMessages = const [],
     this.onMessagesChanged,
     this.onCitationsUpdated,
+    this.indexRevision = 0,
   });
 
   final VaultIndexService vaultIndexService;
@@ -51,6 +52,11 @@ class ChatTab extends StatefulWidget {
   /// Parent screen uses this to keep the Extracted Citations panel in sync.
   /// Each entry is formatted as "[N] PaperTitle — Section".
   final void Function(List<String> citations)? onCitationsUpdated;
+
+  /// Incremented by the parent whenever a background vault index update
+  /// completes (e.g. after saving a new paper). [_ChatTabState] watches this
+  /// in [didUpdateWidget] and refreshes [_availablePapers] automatically.
+  final int indexRevision;
 
   @override
   State<ChatTab> createState() => _ChatTabState();
@@ -91,6 +97,18 @@ class _ChatTabState extends State<ChatTab> {
         _outputLanguage = prefs.getString('chat_output_language') ?? 'en';
       });
     });
+  }
+
+  @override
+  void didUpdateWidget(covariant ChatTab oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // When the parent signals that a background vault index update completed,
+    // refresh the available-papers list so the scope selector shows the new paper.
+    if (widget.indexRevision != oldWidget.indexRevision) {
+      setState(() {
+        _availablePapers = widget.vaultIndexService.getIndexedPaperTitles();
+      });
+    }
   }
 
   @override
@@ -301,9 +319,7 @@ class _ChatTabState extends State<ChatTab> {
             child: const Text('Cancel'),
           ),
           FilledButton(
-            style: FilledButton.styleFrom(
-              backgroundColor: Colors.red.shade400,
-            ),
+            style: FilledButton.styleFrom(backgroundColor: Colors.red.shade400),
             onPressed: () => Navigator.of(context).pop(true),
             child: const Text('Clear'),
           ),
@@ -495,21 +511,6 @@ class _ChatTabState extends State<ChatTab> {
                       ),
                 onPressed: _showScopeSheet,
               ),
-              const Spacer(),
-              // Clear chat button
-              if (_messages.isNotEmpty)
-                IconButton(
-                  icon: Icon(
-                    Icons.delete_sweep_outlined,
-                    size: 18,
-                    color: Colors.grey.shade500,
-                  ),
-                  tooltip: 'Clear chat',
-                  padding: EdgeInsets.zero,
-                  constraints: const BoxConstraints(),
-                  visualDensity: VisualDensity.compact,
-                  onPressed: _isLoading ? null : _clearChat,
-                ),
               const SizedBox(width: 8),
               SegmentedButton<String>(
                 segments: const [
@@ -524,6 +525,20 @@ class _ChatTabState extends State<ChatTab> {
                   textStyle: const TextStyle(fontSize: 12),
                 ),
               ),
+              const Spacer(), // Clear chat button
+              if (_messages.isNotEmpty)
+                IconButton(
+                  icon: Icon(
+                    Icons.delete_sweep_outlined,
+                    size: 18,
+                    color: Colors.grey.shade500,
+                  ),
+                  tooltip: 'Clear chat',
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(),
+                  visualDensity: VisualDensity.compact,
+                  onPressed: _isLoading ? null : _clearChat,
+                ),
             ],
           ),
         ),

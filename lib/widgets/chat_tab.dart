@@ -62,7 +62,11 @@ class ChatTab extends StatefulWidget {
   State<ChatTab> createState() => _ChatTabState();
 }
 
-class _ChatTabState extends State<ChatTab> {
+class _ChatTabState extends State<ChatTab> with AutomaticKeepAliveClientMixin {
+  // Keep state alive when switching tabs so cleared messages are not restored
+  // from initialMessages by a fresh initState call.
+  @override
+  bool get wantKeepAlive => true;
   final ScrollController _scrollCtrl = ScrollController();
   final TextEditingController _inputCtrl = TextEditingController();
 
@@ -356,6 +360,7 @@ class _ChatTabState extends State<ChatTab> {
 
   @override
   Widget build(BuildContext context) {
+    super.build(context); // required by AutomaticKeepAliveClientMixin
     return Column(
       children: [
         if (widget.showStaleBanner)

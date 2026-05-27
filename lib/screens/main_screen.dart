@@ -784,10 +784,11 @@ class _MainScreenState extends State<MainScreen> {
                                 _chatHistory[_currentPaperPath ?? _globalChatKey] ?? [],
                               ),
                               onMessagesChanged: _onChatMessagesChanged,
-                              onCitationsUpdated: (citations) {
-                                if (!mounted) return;
-                                setState(() => paperCitations = citations);
-                              },
+                              // onCitationsUpdated intentionally not wired:
+                              // paperCitations is set exclusively from
+                              // _applyMetadata(meta.citations) so the
+                              // Extracted Citations panel always shows the
+                              // paper's bibliography, not AI RAG results.
                               indexRevision: _indexRevision,
                             ),
 

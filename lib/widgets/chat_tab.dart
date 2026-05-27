@@ -246,7 +246,7 @@ class _ChatTabState extends State<ChatTab> with AutomaticKeepAliveClientMixin {
       ),
       builder: (ctx) => _PaperScopeSheet(
         availablePapers: _availablePapers,
-        selectedPapers: List.from(_selectedPapers),
+        selectedPapers: _selectedPapers.isEmpty ? _availablePapers : _selectedPapers,
         onChanged: (selected) {
           setState(() => _selectedPapers = selected);
           Navigator.of(ctx).pop();

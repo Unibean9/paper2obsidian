@@ -13,7 +13,8 @@ import 'logger_service.dart';
 /// keyword-search fallback path (Phase 3).
 class BedrockUnconfiguredException implements Exception {
   const BedrockUnconfiguredException([
-    this.message = 'AWS Bedrock is not configured. '
+    this.message =
+        'AWS Bedrock is not configured. '
         'Import .env in Settings or set AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY.',
   ]);
 
@@ -23,110 +24,175 @@ class BedrockUnconfiguredException implements Exception {
   String toString() => 'BedrockUnconfiguredException: $message';
 }
 
-/// Configuration for AWS Bedrock Runtime (Converse API).
-class BedrockConfig {
-  final String region;
-  final String modelId;
-  final String accessKeyId;
-  final String secretAccessKey;
-  final String? sessionToken;
+// ---------------------------------------------------------------------------
+// Model descriptors — one per API type
+// ---------------------------------------------------------------------------
 
+/// Text generation model used by the Converse API (chat / RAG synthesis).
+///
+/// Env var: `BEDROCK_TEXT_MODEL_ID`. Default: Google Gemma 3 4b It.
+class BedrockTextModel {
+  const BedrockTextModel({required this.modelId});
+
+  final String modelId;
+
+  static const String _defaultModelId = 'google.gemma-3-4b-it';
+
+  static BedrockTextModel fromEnvironment() {
+    const define = String.fromEnvironment('BEDROCK_TEXT_MODEL_ID');
+    final id = define.isNotEmpty
+        ? define
+        : (EnvConfig.get('BEDROCK_TEXT_MODEL_ID') ?? _defaultModelId);
+    return BedrockTextModel(modelId: id.trim());
+  }
+
+  bool get isSet => modelId.isNotEmpty;
+
+  @override
+  String toString() => 'BedrockTextModel($modelId)';
+}
+
+/// Embedding model used by the InvokeModel API (semantic search index).
+///
+/// Env var: `BEDROCK_EMBED_MODEL_ID`. Default: Titan Embeddings V2 (1024-dim).
+class BedrockEmbedModel {
+  const BedrockEmbedModel({required this.modelId, this.dimensions = 1024});
+
+  final String modelId;
+
+  /// Output vector dimensions — must match the index stored on disk.
+  /// Changing this requires a full vault re-index.
+  final int dimensions;
+
+  static const String _defaultModelId = 'amazon.titan-embed-text-v2:0';
+
+  static BedrockEmbedModel fromEnvironment() {
+    const define = String.fromEnvironment('BEDROCK_EMBED_MODEL_ID');
+    final id = define.isNotEmpty
+        ? define
+        : (EnvConfig.get('BEDROCK_EMBED_MODEL_ID') ?? _defaultModelId);
+    return BedrockEmbedModel(modelId: id.trim()); // key unchanged
+  }
+
+  bool get isSet => modelId.isNotEmpty;
+
+  @override
+  String toString() => 'BedrockEmbedModel($modelId, ${dimensions}d)';
+}
+
+// ---------------------------------------------------------------------------
+// BedrockConfig — credentials + region shared by all models
+// ---------------------------------------------------------------------------
+
+/// AWS credentials and region, shared by [BedrockTextModel] and [BedrockEmbedModel].
+///
+/// Load once at startup via [BedrockConfig.fromEnvironment].
+class BedrockConfig {
   const BedrockConfig({
     required this.region,
-    required this.modelId,
+    required this.textModel,
+    required this.embedModel,
     required this.accessKeyId,
     required this.secretAccessKey,
     this.sessionToken,
   });
 
-  factory BedrockConfig.sanitized({
-    required String region,
-    required String modelId,
-    required String accessKeyId,
-    required String secretAccessKey,
-    String? sessionToken,
-  }) {
-    return BedrockConfig(
-      region: region.trim(),
-      modelId: modelId.trim(),
-      accessKeyId: accessKeyId.trim(),
-      secretAccessKey: secretAccessKey.trim(),
-      sessionToken: sessionToken?.trim().isEmpty == true
-          ? null
-          : sessionToken?.trim(),
-    );
-  }
+  final String region;
+
+  /// Text generation model (Converse API).
+  final BedrockTextModel textModel;
+
+  /// Embedding model (InvokeModel API).
+  final BedrockEmbedModel embedModel;
+
+  final String accessKeyId;
+  final String secretAccessKey;
+  final String? sessionToken;
 
   bool get isConfigured =>
       region.isNotEmpty &&
-      modelId.isNotEmpty &&
+      textModel.isSet &&
+      embedModel.isSet &&
       accessKeyId.isNotEmpty &&
       secretAccessKey.isNotEmpty;
 
-  /// Priority: `--dart-define` > `.env` > defaults (no secrets in source).
+  /// Priority: `--dart-define` > `.env` > built-in defaults.
+  ///
+  /// Credentials are never baked into source — they must come from env vars or
+  /// a `.env` file that is listed in `.gitignore`.
   static BedrockConfig fromEnvironment() {
     const regionDefine = String.fromEnvironment('AWS_REGION');
-    const modelIdDefine = String.fromEnvironment('BEDROCK_MODEL_ID');
     const accessKeyDefine = String.fromEnvironment('AWS_ACCESS_KEY_ID');
     const secretKeyDefine = String.fromEnvironment('AWS_SECRET_ACCESS_KEY');
     const sessionTokenDefine = String.fromEnvironment('AWS_SESSION_TOKEN');
 
-    return BedrockConfig.sanitized(
+    final sessionToken = sessionTokenDefine.isNotEmpty
+        ? sessionTokenDefine
+        : EnvConfig.get('AWS_SESSION_TOKEN');
+
+    return BedrockConfig(
       region: regionDefine.isNotEmpty
           ? regionDefine
           : (EnvConfig.get('AWS_REGION') ?? 'us-east-1'),
-      modelId: modelIdDefine.isNotEmpty
-          ? modelIdDefine
-          : (EnvConfig.get('BEDROCK_MODEL_ID') ??
-              'anthropic.claude-3-5-sonnet-20240620-v2:0'),
+      textModel: BedrockTextModel.fromEnvironment(),
+      embedModel: BedrockEmbedModel.fromEnvironment(),
       accessKeyId: accessKeyDefine.isNotEmpty
           ? accessKeyDefine
           : (EnvConfig.get('AWS_ACCESS_KEY_ID') ?? ''),
       secretAccessKey: secretKeyDefine.isNotEmpty
           ? secretKeyDefine
           : (EnvConfig.get('AWS_SECRET_ACCESS_KEY') ?? ''),
-      sessionToken: sessionTokenDefine.isNotEmpty
-          ? sessionTokenDefine
-          : EnvConfig.get('AWS_SESSION_TOKEN'),
+      sessionToken: sessionToken?.trim().isEmpty == true
+          ? null
+          : sessionToken?.trim(),
     );
   }
 }
 
-/// Signed HTTP client for Amazon Bedrock Runtime Converse API.
+// ---------------------------------------------------------------------------
+// BedrockClient
+// ---------------------------------------------------------------------------
+
+/// Signed HTTP client for Amazon Bedrock Runtime.
+///
+/// Uses the Converse API for [converse] (text generation)
+/// and the InvokeModel API for [embed] (embeddings).
 class BedrockClient {
   BedrockClient({required this.config});
 
   final BedrockConfig config;
 
-  /// Model id stays raw in the URL path (`:0`). Signer encodes once for SigV4.
-  Uri _converseUri() {
-    return Uri.parse(
-      'https://bedrock-runtime.${config.region}.amazonaws.com'
-      '/model/${config.modelId}/converse',
-    );
-  }
+  static String _encodedModelId(String modelId) => Uri.encodeComponent(modelId);
 
-  /// InvokeModel endpoint for Titan embeddings (and any non-Converse model).
-  Uri _invokeUri(String modelId) {
-    return Uri.parse(
-      'https://bedrock-runtime.${config.region}.amazonaws.com'
-      '/model/$modelId/invoke',
-    );
-  }
+  Uri _converseUri() => Uri.parse(
+    'https://bedrock-runtime.${config.region}.amazonaws.com'
+    '/model/${_encodedModelId(config.textModel.modelId)}/converse',
+  );
 
-  AWSSigV4Signer _signer() {
-    return AWSSigV4Signer(
-      credentialsProvider: AWSCredentialsProvider(
-        AWSCredentials(
-          config.accessKeyId,
-          config.secretAccessKey,
-          config.sessionToken,
-        ),
+  Uri _invokeUri(String modelId) => Uri.parse(
+    'https://bedrock-runtime.${config.region}.amazonaws.com'
+    '/model/${_encodedModelId(modelId)}/invoke',
+  );
+
+  AWSSigV4Signer _signer() => AWSSigV4Signer(
+    credentialsProvider: AWSCredentialsProvider(
+      AWSCredentials(
+        config.accessKeyId,
+        config.secretAccessKey,
+        config.sessionToken,
       ),
-    );
-  }
+    ),
+  );
 
-  /// Sends a Converse request and returns assistant text.
+  AWSCredentialScope get _scope => AWSCredentialScope(
+    region: config.region,
+    service: const AWSService('bedrock'),
+  );
+
+  // ─── Converse (text generation) ───────────────────────────────────────────
+
+  /// Sends a Converse request to [BedrockConfig.textModel] and returns
+  /// the assistant text.
   Future<String> converse({
     required String systemPrompt,
     required String userMessage,
@@ -162,24 +228,21 @@ class BedrockClient {
       body: utf8.encode(body),
     );
 
-    final signedRequest = await _signer().sign(
+    final signed = await _signer().sign(
       request,
-      credentialScope: AWSCredentialScope(
-        region: config.region,
-        service: const AWSService('bedrock'),
-      ),
+      credentialScope: _scope,
       serviceConfiguration: const BaseServiceConfiguration(),
     );
 
-    final response = await signedRequest.send().response.timeout(
+    final response = await signed.send().response.timeout(
       const Duration(seconds: 120),
-      onTimeout: () => throw Exception('Bedrock request timeout'),
+      onTimeout: () => throw Exception('Bedrock converse request timeout'),
     );
     final responseBody = await response.decodeBody();
 
     if (response.statusCode != 200) {
       AppLogger.log(
-        'Bedrock HTTP error ${response.statusCode}',
+        'Bedrock converse HTTP ${response.statusCode}',
         category: LogCategory.network,
         error: responseBody,
       );
@@ -205,34 +268,34 @@ class BedrockClient {
     throw Exception('Bedrock returned no text content');
   }
 
-  /// Embeds [text] using the Titan Embeddings V2 model via InvokeModel.
+  // ─── Embed (embedding generation) ─────────────────────────────────────────
+
+  /// Embeds [text] using [BedrockConfig.embedModel] via InvokeModel.
   ///
-  /// Returns exactly 1024 unit-normalised float values suitable for
-  /// cosine-similarity search (dot product of two unit vectors).
+  /// Returns exactly [BedrockEmbedModel.dimensions] unit-normalised float
+  /// values suitable for cosine-similarity search (dot product of unit vectors).
   ///
   /// Throws [BedrockUnconfiguredException] when AWS credentials are absent.
   /// IMPORTANT: call this method DIRECTLY from [VaultIndexService] — do not
   /// route through api_service.dart wrappers, which catch and re-wrap all
   /// exceptions as generic [Exception], destroying the typed error needed to
-  /// trigger the BM25 keyword-search fallback (Phase 3).
+  /// trigger the BM25 keyword-search fallback.
   Future<List<double>> embed(String text) async {
     if (!config.isConfigured) {
       throw const BedrockUnconfiguredException();
     }
 
-    // Read embed model ID from .env; fall back to Titan Embeddings V2.
-    final embedModelId =
-        EnvConfig.get('BEDROCK_EMBED_MODEL_ID') ?? 'amazon.titan-embed-text-v2:0';
+    final embedModel = config.embedModel;
 
     final body = jsonEncode({
       'inputText': text,
-      'dimensions': 1024,
+      'dimensions': embedModel.dimensions,
       'normalize': true,
     });
 
     final request = AWSHttpRequest(
       method: AWSHttpMethod.post,
-      uri: _invokeUri(embedModelId),
+      uri: _invokeUri(embedModel.modelId),
       headers: {
         AWSHeaders.contentType: 'application/json',
         AWSHeaders.accept: 'application/json',
@@ -240,16 +303,13 @@ class BedrockClient {
       body: utf8.encode(body),
     );
 
-    final signedRequest = await _signer().sign(
+    final signed = await _signer().sign(
       request,
-      credentialScope: AWSCredentialScope(
-        region: config.region,
-        service: const AWSService('bedrock'),
-      ),
+      credentialScope: _scope,
       serviceConfiguration: const BaseServiceConfiguration(),
     );
 
-    final response = await signedRequest.send().response.timeout(
+    final response = await signed.send().response.timeout(
       const Duration(seconds: 30),
       onTimeout: () => throw Exception('Bedrock embed request timeout'),
     );
@@ -257,7 +317,7 @@ class BedrockClient {
 
     if (response.statusCode != 200) {
       AppLogger.log(
-        'Bedrock embed HTTP error ${response.statusCode}',
+        'Bedrock embed HTTP ${response.statusCode}',
         category: LogCategory.network,
         error: responseBody,
       );
@@ -271,14 +331,13 @@ class BedrockClient {
     if (raw == null || raw.isEmpty) {
       throw Exception('Bedrock embed returned no embedding vector');
     }
-    // Titan may return integer-valued coefficients (e.g. 0 or 1); use num
-    // promotion instead of a lazy cast<double>() that throws TypeError lazily.
-    if (raw.length != 1024) {
+    if (raw.length != embedModel.dimensions) {
       throw Exception(
-        'Bedrock embed: expected 1024 dimensions, got ${raw.length}. '
-        'Check BEDROCK_EMBED_MODEL_ID — model must support dimensions=1024.',
+        'Bedrock embed: expected ${embedModel.dimensions} dimensions, '
+        'got ${raw.length}. Check BEDROCK_EMBED_MODEL_ID.',
       );
     }
+    // Use (e as num).toDouble() — Titan may return integer-valued coefficients.
     return raw.map((e) => (e as num).toDouble()).toList();
   }
 }

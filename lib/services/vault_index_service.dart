@@ -233,6 +233,10 @@ class VaultIndexService {
   /// Returns an empty result — never throws — when the index has no chunks.
   Future<QueryResult> query(String question, {int topK = 5}) async {
     if (_chunks.isEmpty) {
+      AppLogger.log(
+        'RAG query: index empty — no papers indexed yet',
+        category: LogCategory.other,
+      );
       return const QueryResult(chunks: [], usedFallback: false);
     }
 
@@ -249,8 +253,16 @@ class VaultIndexService {
           .map((c) => _Scored(dotProduct(queryVec, c.embedding), c))
           .toList()
         ..sort((a, b) => b.score.compareTo(a.score));
+
+      final topChunks = scored.take(topK).toList();
+      _logQueryResult(
+        question: question,
+        mode: 'semantic',
+        scored: topChunks,
+      );
+
       return QueryResult(
-        chunks: scored.take(topK).map((s) => s.chunk).toList(),
+        chunks: topChunks.map((s) => s.chunk).toList(),
         usedFallback: false,
       );
     } on BedrockUnconfiguredException {
@@ -279,8 +291,15 @@ class VaultIndexService {
         .toList()
       ..sort((a, b) => b.score.compareTo(a.score));
 
+    final topChunks = scored.take(topK).toList();
+    _logQueryResult(
+      question: question,
+      mode: 'bm25',
+      scored: topChunks,
+    );
+
     return QueryResult(
-      chunks: scored.take(topK).map((s) => s.chunk).toList(),
+      chunks: topChunks.map((s) => s.chunk).toList(),
       usedFallback: true,
     );
   }
@@ -334,6 +353,58 @@ class VaultIndexService {
     }
     return records;
   }
+
+  // ─── Markdown section splitter ─────────────────────────────────────────────
+
+  // ─── Query logging ─────────────────────────────────────────────────────────
+
+  /// Logs retrieval diagnostics for a completed query.
+  ///
+  /// Signals to watch:
+  /// - `topScore < 0.30` (semantic) → query poorly matched vault content
+  /// - `topScore < 1.00` (bm25)     → keyword overlap is low
+  /// - `mode: bm25`                 → AWS credentials absent or embed failed
+  void _logQueryResult({
+    required String question,
+    required String mode,
+    required List<_Scored> scored,
+  }) {
+    if (scored.isEmpty) {
+      AppLogger.log(
+        'RAG [$mode] "${_truncate(question)}" → no results',
+        category: LogCategory.other,
+      );
+      return;
+    }
+
+    final topScore = scored.first.score;
+    final hits = scored
+        .map((s) => '${s.chunk.paperTitle.split(' ').first}/'
+            '${s.chunk.section} '
+            '(${s.score.toStringAsFixed(2)})')
+        .join(', ');
+
+    final quality = mode == 'semantic'
+        ? (topScore >= 0.70
+            ? '✓ strong'
+            : topScore >= 0.45
+                ? '~ moderate'
+                : '✗ weak — query may not match vault')
+        : (topScore >= 5.0
+            ? '✓ strong'
+            : topScore >= 1.0
+                ? '~ moderate'
+                : '✗ weak — few keyword matches');
+
+    AppLogger.log(
+      'RAG [$mode] "${_truncate(question)}" → '
+      'top=${topScore.toStringAsFixed(2)} $quality | $hits',
+      category: LogCategory.other,
+    );
+  }
+
+  static String _truncate(String s, [int max = 60]) =>
+      s.length <= max ? s : '${s.substring(0, max)}…';
 
   // ─── Markdown section splitter ─────────────────────────────────────────────
 

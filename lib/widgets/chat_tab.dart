@@ -90,11 +90,10 @@ class _ChatTabState extends State<ChatTab> {
         return;
       }
 
-      // De-duplicate: keep one chunk per paper title to avoid one paper
-      // dominating all top-k slots when multiple papers are available.
       final seen = <String>{};
-      final chunks =
-          result.chunks.where((c) => seen.add(c.paperTitle)).toList();
+      final chunks = result.chunks
+          .where((c) => seen.add('${c.paperTitle}::${c.section}'))
+          .toList();
 
       // Build numbered attribution context.
       final contextBuf = StringBuffer();
@@ -105,12 +104,21 @@ class _ChatTabState extends State<ChatTab> {
           ..writeln();
       }
 
-      final systemPrompt = '''You are a research assistant.
-Answer using ONLY the provided sources below.
-After each claim cite the source as [N].
-End your response with a "Sources:" block listing every cited source.
-If a claim has no source, say "I don't have information on that."
+      final exampleCites = List.generate(
+        chunks.length,
+        (i) => '[${i + 1}]',
+      ).join(', ');
 
+      final systemPrompt =
+          '''You are a research assistant.
+Use ONLY the numbered sources below to answer the question.
+After each sentence that uses a source, write its number in brackets.
+Example: "Agile teams use sprints [1]. Requirements change frequently [2]."
+Available citation numbers: $exampleCites
+End your answer with a "Sources:" section that lists every number you cited.
+If you cannot find an answer in the sources, say "I don't have information on that."
+
+SOURCES:
 ${contextBuf.toString()}''';
 
       String response;
@@ -128,7 +136,9 @@ ${contextBuf.toString()}''';
         );
         for (int i = 0; i < chunks.length; i++) {
           buf
-            ..writeln('[${i + 1}] **${chunks[i].paperTitle}** — ${chunks[i].section}')
+            ..writeln(
+              '[${i + 1}] **${chunks[i].paperTitle}** — ${chunks[i].section}',
+            )
             ..writeln(chunks[i].text)
             ..writeln();
         }
@@ -136,14 +146,18 @@ ${contextBuf.toString()}''';
         return;
       }
 
-      // Ensure a Sources block is always present.
-      if (!response.contains('Sources:') && !response.contains('[1]')) {
-        final sourceLines = StringBuffer('\n\nSources:\n');
-        for (int i = 0; i < chunks.length; i++) {
-          sourceLines.writeln('[${i + 1}] ${chunks[i].paperTitle} — ${chunks[i].section}');
-        }
-        response += sourceLines.toString();
+      // Always strip any model-generated "Sources:" block (may be incomplete)
+      // and replace with the app-controlled version that has full paper details.
+      final sourcesRe = RegExp(r'\n*Sources:.*$', dotAll: true);
+      response = response.replaceFirst(sourcesRe, '').trimRight();
+
+      final sourceLines = StringBuffer('\n\nSources:\n');
+      for (int i = 0; i < chunks.length; i++) {
+        sourceLines.writeln(
+          '[${i + 1}] ${chunks[i].paperTitle} — ${chunks[i].section}',
+        );
       }
+      response += sourceLines.toString();
 
       // Prepend BM25 fallback notice when semantic search was unavailable.
       if (result.usedFallback) {
@@ -188,12 +202,13 @@ ${contextBuf.toString()}''';
   Widget build(BuildContext context) {
     return Column(
       children: [
-        if (widget.showStaleBanner) _StaleBanner(
-          isRebuilding: _isRebuilding,
-          onRebuild: _handleRebuild,
-          onDismiss: widget.onDismissBanner,
-          primaryColor: widget.primaryColor,
-        ),
+        if (widget.showStaleBanner)
+          _StaleBanner(
+            isRebuilding: _isRebuilding,
+            onRebuild: _handleRebuild,
+            onDismiss: widget.onDismissBanner,
+            primaryColor: widget.primaryColor,
+          ),
 
         // Message list
         Expanded(
@@ -205,19 +220,20 @@ ${contextBuf.toString()}''';
               final msg = _messages[index];
               final isUser = msg['role'] == 'user';
               return Align(
-                alignment:
-                    isUser ? Alignment.centerRight : Alignment.centerLeft,
+                alignment: isUser
+                    ? Alignment.centerRight
+                    : Alignment.centerLeft,
                 child: Container(
                   margin: const EdgeInsets.only(bottom: 12),
                   padding: const EdgeInsets.symmetric(
-                      horizontal: 16, vertical: 12),
+                    horizontal: 16,
+                    vertical: 12,
+                  ),
                   constraints: BoxConstraints(
                     maxWidth: MediaQuery.of(context).size.width * 0.22,
                   ),
                   decoration: BoxDecoration(
-                    color: isUser
-                        ? widget.primaryColor
-                        : Colors.grey.shade100,
+                    color: isUser ? widget.primaryColor : Colors.grey.shade100,
                     borderRadius: BorderRadius.circular(16).copyWith(
                       bottomRight: isUser
                           ? const Radius.circular(0)
@@ -257,8 +273,7 @@ ${contextBuf.toString()}''';
                 const SizedBox(width: 8),
                 Text(
                   'Searching vault…',
-                  style:
-                      TextStyle(color: Colors.grey.shade500, fontSize: 12),
+                  style: TextStyle(color: Colors.grey.shade500, fontSize: 12),
                 ),
               ],
             ),
@@ -273,18 +288,25 @@ ${contextBuf.toString()}''';
             scrollDirection: Axis.horizontal,
             child: Wrap(
               spacing: 8,
-              children: [
-                'What are the key findings?',
-                'Compare research methodologies',
-                'What limitations are discussed?',
-              ].map((s) => ActionChip(
-                    label: Text(s, style: const TextStyle(fontSize: 12)),
-                    backgroundColor:
-                        widget.primaryColor.withValues(alpha: 0.05),
-                    side: BorderSide(
-                        color: widget.primaryColor.withValues(alpha: 0.2)),
-                    onPressed: () => _handleSuggestion(s),
-                  )).toList(),
+              children:
+                  [
+                        'What are the key findings?',
+                        'Compare research methodologies',
+                        'What limitations are discussed?',
+                      ]
+                      .map(
+                        (s) => ActionChip(
+                          label: Text(s, style: const TextStyle(fontSize: 12)),
+                          backgroundColor: widget.primaryColor.withValues(
+                            alpha: 0.05,
+                          ),
+                          side: BorderSide(
+                            color: widget.primaryColor.withValues(alpha: 0.2),
+                          ),
+                          onPressed: () => _handleSuggestion(s),
+                        ),
+                      )
+                      .toList(),
             ),
           ),
         ),
@@ -300,7 +322,9 @@ ${contextBuf.toString()}''';
                   decoration: InputDecoration(
                     hintText: 'Ask across all vault papers…',
                     contentPadding: const EdgeInsets.symmetric(
-                        horizontal: 16, vertical: 12),
+                      horizontal: 16,
+                      vertical: 12,
+                    ),
                     border: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(24),
                       borderSide: BorderSide.none,
@@ -315,8 +339,7 @@ ${contextBuf.toString()}''';
               CircleAvatar(
                 backgroundColor: widget.primaryColor,
                 child: IconButton(
-                  icon:
-                      const Icon(Icons.send, color: Colors.white, size: 18),
+                  icon: const Icon(Icons.send, color: Colors.white, size: 18),
                   onPressed: _isLoading ? null : _handleSend,
                 ),
               ),
@@ -351,8 +374,11 @@ class _StaleBanner extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       child: Row(
         children: [
-          Icon(Icons.warning_amber_rounded,
-              size: 16, color: Colors.amber.shade800),
+          Icon(
+            Icons.warning_amber_rounded,
+            size: 16,
+            color: Colors.amber.shade800,
+          ),
           const SizedBox(width: 8),
           Expanded(
             child: Text(
@@ -372,14 +398,15 @@ class _StaleBanner extends StatelessWidget {
           else
             TextButton(
               style: TextButton.styleFrom(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 8, vertical: 0),
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 0),
                 minimumSize: Size.zero,
                 tapTargetSize: MaterialTapTargetSize.shrinkWrap,
               ),
               onPressed: onRebuild,
-              child: Text('Rebuild',
-                  style: TextStyle(fontSize: 12, color: primaryColor)),
+              child: Text(
+                'Rebuild',
+                style: TextStyle(fontSize: 12, color: primaryColor),
+              ),
             ),
           const SizedBox(width: 4),
           IconButton(

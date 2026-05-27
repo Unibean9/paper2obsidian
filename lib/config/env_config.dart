@@ -58,7 +58,8 @@ class EnvConfig {
       if (hasAwsCredentials) {
         debugPrint(
           'Env: loaded ${_values.length} keys from $_loadedFrom '
-          '(model: ${_values['BEDROCK_MODEL_ID'] ?? "default"})',
+          '(text: ${_values['BEDROCK_TEXT_MODEL_ID'] ?? "default"}, '
+          'embed: ${_values['BEDROCK_EMBED_MODEL_ID'] ?? "default"})',
         );
       } else {
         debugPrint(

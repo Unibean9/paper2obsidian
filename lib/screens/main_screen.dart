@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart' show kIsWeb;
@@ -37,12 +38,29 @@ class _MainScreenState extends State<MainScreen> {
   // =========================================================================
   String vaultPath = '';
   File? selectedPdf;
+
+  /// Extraction state machine. Drives [ActionsPanel] button rendering.
+  /// [PaperStatus.extracting] = pipeline running; [isLoading] = save running.
+  PaperStatus _paperStatus = PaperStatus.idle;
+
+  /// True only during the Save-to-Obsidian async operation (not during extraction).
   bool isLoading = false;
+
   // NOTE: _isCancelled is NOT in Bucket A — it lives in PaperController.isCancelled (single source of truth)
   String statusText = AppMessages.get(MessageKey.statusReady);
   String fullPdfText = '';
   List<String> paperCitations = [];
   List<String> progressLogs = [];
+
+  // ── Chat history persistence (Phase 2) ──────────────────────────────────
+  /// Normalized path of the currently active library paper, used as the
+  /// key in [_chatHistory]. Null when no library paper is open.
+  String? _currentPaperPath;
+
+  /// Per-paper chat message threads keyed by normalized md-file path.
+  /// Value type is `Map<String, dynamic>` (not String) so Phase 3 can
+  /// store a `sources` key alongside `role` and `content`.
+  final Map<String, List<Map<String, dynamic>>> _chatHistory = {};
 
   // Vault index state (Phase 6)
   bool _indexStale = false;
@@ -138,6 +156,60 @@ class _MainScreenState extends State<MainScreen> {
       await _vaultIndexService.loadIndex(vaultPath);
       await _checkStaleness();
     }
+    await _loadChatHistory();
+  }
+
+  // ─── Chat history persistence ───────────────────────────────────────────────
+
+  /// Loads the persisted per-paper chat history from [SharedPreferences].
+  /// Called once at startup via [_loadSettings].
+  Future<void> _loadChatHistory() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final stored = prefs.getString('chat_history');
+      if (stored == null) return;
+      final raw = jsonDecode(stored) as Map<String, dynamic>;
+      if (!mounted) return;
+      setState(() {
+        _chatHistory.clear();
+        raw.forEach((key, value) {
+          _chatHistory[key] = (value as List)
+              .map((m) => Map<String, dynamic>.from(m as Map))
+              .toList();
+        });
+      });
+    } catch (e) {
+      AppLogger.log(
+        'Failed to load chat history',
+        category: LogCategory.other,
+        error: e,
+      );
+    }
+  }
+
+  /// Serialises [_chatHistory] to JSON and writes it to [SharedPreferences].
+  /// Fire-and-forget — never throws.
+  Future<void> _saveChatHistory() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('chat_history', jsonEncode(_chatHistory));
+    } catch (e) {
+      AppLogger.log(
+        'Failed to save chat history',
+        category: LogCategory.other,
+        error: e,
+      );
+    }
+  }
+
+  /// Callback wired into [ChatTab.onMessagesChanged].
+  ///
+  /// Keeps [_chatHistory] in sync with every message add inside the tab,
+  /// then persists asynchronously. Always copies the list to avoid aliasing.
+  void _onChatMessagesChanged(List<Map<String, dynamic>> messages) {
+    if (_currentPaperPath == null) return;
+    _chatHistory[_currentPaperPath!] = List.from(messages);
+    _saveChatHistory(); // fire-and-forget
   }
 
   Future<void> _saveSettings() async {
@@ -255,6 +327,10 @@ class _MainScreenState extends State<MainScreen> {
   // PDF PROCESSING
   // =========================================================================
 
+  /// Step 1 of 2: open file picker and stage the chosen PDF.
+  ///
+  /// Sets [_paperStatus] to [PaperStatus.uploaded] and shows the PDF in the
+  /// viewer. Does NOT start extraction — the user must tap "Extract Paper".
   Future<void> _pickPdf() async {
     try {
       final result = await FilePicker.platform.pickFiles(
@@ -281,29 +357,24 @@ class _MainScreenState extends State<MainScreen> {
       if (!mounted) return;
       setState(() {
         selectedPdf = file;
+        _paperStatus = PaperStatus.uploaded;
         statusText = AppMessages.statusSelectedPdf(p.basename(file.path));
         fullPdfText = '';
-        isLoading = true;
         progressLogs.clear();
+        // Clear form so the panel is visually blank until extraction runs.
+        _titleCtrl.clear();
+        _authorsCtrl.clear();
+        _venueCtrl.clear();
+        _yearCtrl.clear();
+        _doiCtrl.clear();
+        _keywordsCtrl.clear();
+        _datasetCtrl.clear();
+        _problemCtrl.clear();
+        _limitationCtrl.clear();
+        _summaryCtrl.clear();
+        paperCitations = [];
+        _paperAbstract = '';
       });
-
-      try {
-        final PaperMetadata meta = await _paperController.processPdf(file);
-        // Guard against cancel: isCancelled means the pipeline was stopped mid-flight
-        // and returned PaperMetadata.empty() — do not overwrite already-populated fields.
-        if (mounted && !_paperController.isCancelled) {
-          _applyMetadata(meta);
-        }
-      } catch (e) {
-        AppLogger.log(
-        'PDF extraction failed',
-        category: LogCategory.parse,
-        error: e,
-      );
-      _addLog(AppMessages.errorPdfExtraction(e));
-      } finally {
-        if (mounted) setState(() => isLoading = false);
-      }
     } catch (e, stack) {
       AppLogger.log(
         'PDF picker error',
@@ -313,6 +384,65 @@ class _MainScreenState extends State<MainScreen> {
       );
       _showUserMessage(AppMessages.errorFilePickerFailed(e), isError: true);
     }
+  }
+
+  /// Step 2 of 2: run the extraction pipeline on the staged PDF.
+  ///
+  /// Called when the user taps "Extract Paper". Transitions:
+  ///   uploaded → extracting → done (or error on failure).
+  ///
+  /// **Single owner rule**: the `finally` block is the sole writer of
+  /// [_paperStatus] on the cancel path; [_handleCancel] must NOT touch it.
+  Future<void> _extractPaper() async {
+    if (selectedPdf == null) return;
+    setState(() => _paperStatus = PaperStatus.extracting);
+    try {
+      final PaperMetadata meta = await _paperController.processPdf(selectedPdf!);
+      // Guard against cancel — processPdf returns empty when isCancelled.
+      if (mounted && !_paperController.isCancelled) {
+        _applyMetadata(meta);
+        if (mounted) setState(() => _paperStatus = PaperStatus.done);
+      }
+    } catch (e) {
+      AppLogger.log('PDF extraction failed', category: LogCategory.parse, error: e);
+      _addLog(AppMessages.errorPdfExtraction(e));
+      if (mounted) setState(() => _paperStatus = PaperStatus.error);
+    } finally {
+      // Single owner rule: on cancel the try/catch leave _paperStatus == extracting;
+      // restore to uploaded (retry) or idle (if discarded mid-flight).
+      if (mounted && _paperController.isCancelled) {
+        setState(
+          () => _paperStatus =
+              selectedPdf != null ? PaperStatus.uploaded : PaperStatus.idle,
+        );
+      }
+    }
+  }
+
+  /// Discards the currently staged PDF and resets all state to [PaperStatus.idle].
+  ///
+  /// Only callable from [PaperStatus.uploaded] or [PaperStatus.error] — the UI
+  /// does not expose "Discard" during extraction.
+  void _discardPaper() {
+    setState(() {
+      selectedPdf = null;
+      _paperStatus = PaperStatus.idle;
+      statusText = AppMessages.get(MessageKey.statusReady);
+      progressLogs.clear();
+      fullPdfText = '';
+      _titleCtrl.clear();
+      _authorsCtrl.clear();
+      _venueCtrl.clear();
+      _yearCtrl.clear();
+      _doiCtrl.clear();
+      _keywordsCtrl.clear();
+      _datasetCtrl.clear();
+      _problemCtrl.clear();
+      _limitationCtrl.clear();
+      _summaryCtrl.clear();
+      paperCitations = [];
+      _paperAbstract = '';
+    });
   }
 
   // =========================================================================
@@ -371,9 +501,21 @@ class _MainScreenState extends State<MainScreen> {
   // =========================================================================
 
   Future<void> _openPaperFromLibrary(String mdPath) async {
+    final normalizedPath = p.normalize(mdPath);
+
+    // ── Snapshot ordering rule (Phase 2) ──────────────────────────────────
+    // _chatHistory[_currentPaperPath] is kept in sync by _onChatMessagesChanged,
+    // so it already holds the latest messages. Updating _currentPaperPath in the
+    // same setState below triggers ChatTab to rebuild with ValueKey(normalizedPath),
+    // seeding from _chatHistory[normalizedPath]. The snapshot is already in the map.
+
     setState(() {
       isLoading = true;
       progressLogs.clear();
+      // Key change happens here — ChatTab rebuilds with new ValueKey after setState.
+      _currentPaperPath = normalizedPath;
+      // Library papers are already processed; enable "Save to Obsidian".
+      _paperStatus = PaperStatus.done;
     });
     _addLog(AppMessages.statusLoadingPaper(p.basename(mdPath)));
 
@@ -445,13 +587,13 @@ class _MainScreenState extends State<MainScreen> {
   // CANCEL
   // =========================================================================
 
-  /// Cancel handler: stops the controller pipeline AND resets screen loading state.
+  /// Cancel handler: signals the controller to stop.
+  ///
+  /// Does NOT touch [_paperStatus] — the `finally` block in [_extractPaper]
+  /// is the single owner of cancel-path status transitions (single-owner rule).
   void _handleCancel() {
     _paperController.cancel();
-    setState(() {
-      isLoading = false;
-      statusText = AppMessages.get(MessageKey.statusCancelled);
-    });
+    setState(() => statusText = AppMessages.get(MessageKey.statusCancelled));
   }
 
   // =========================================================================
@@ -522,6 +664,7 @@ class _MainScreenState extends State<MainScreen> {
             SizedBox(
               width: 260,
               child: ActionsPanel(
+                paperStatus: _paperStatus,
                 isLoading: isLoading,
                 vaultPath: vaultPath,
                 selectedPdf: selectedPdf,
@@ -529,6 +672,8 @@ class _MainScreenState extends State<MainScreen> {
                 statusText: statusText,
                 primaryColor: primaryColor,
                 onPickPdf: _pickPdf,
+                onExtract: _extractPaper,
+                onDiscard: _discardPaper,
                 onSaveToObsidian: _saveToObsidian,
                 onCancel: _handleCancel,
               ),
@@ -607,7 +752,11 @@ class _MainScreenState extends State<MainScreen> {
                             ),
 
                             // TAB 2: VAULT RAG CHAT
+                            // ValueKey(_currentPaperPath) ensures Flutter
+                            // invalidates State on every paper switch, so
+                            // initState re-seeds from initialMessages.
                             ChatTab(
+                              key: ValueKey(_currentPaperPath),
                               vaultIndexService: _vaultIndexService,
                               bedrockClient: _bedrockClient,
                               primaryColor: primaryColor,
@@ -616,6 +765,12 @@ class _MainScreenState extends State<MainScreen> {
                               onRebuildIndex: _rebuildIndex,
                               onDismissBanner: () => setState(
                                   () => _bannerDismissed = true),
+                              initialMessages: _currentPaperPath != null
+                                  ? List.from(
+                                      _chatHistory[_currentPaperPath] ?? [],
+                                    )
+                                  : const [],
+                              onMessagesChanged: _onChatMessagesChanged,
                             ),
 
                             // TAB 3: CITATIONS SCREEN

@@ -1,3 +1,4 @@
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 
 import '../services/bedrock_client.dart';
@@ -19,6 +20,8 @@ class ChatTab extends StatefulWidget {
     this.showStaleBanner = false,
     this.onRebuildIndex,
     this.onDismissBanner,
+    this.initialMessages = const [],
+    this.onMessagesChanged,
   });
 
   final VaultIndexService vaultIndexService;
@@ -34,6 +37,14 @@ class ChatTab extends StatefulWidget {
   /// Called when the user taps "✕" to dismiss the staleness banner.
   final VoidCallback? onDismissBanner;
 
+  /// Seed messages to display on mount (restored from per-paper history).
+  /// The parent copies the list before passing — no aliasing risk.
+  final List<Map<String, dynamic>> initialMessages;
+
+  /// Fired whenever the message list changes (user send or assistant reply).
+  /// The parent uses this to keep [_chatHistory] in sync for persistence.
+  final void Function(List<Map<String, dynamic>> messages)? onMessagesChanged;
+
   @override
   State<ChatTab> createState() => _ChatTabState();
 }
@@ -42,9 +53,18 @@ class _ChatTabState extends State<ChatTab> {
   final ScrollController _scrollCtrl = ScrollController();
   final TextEditingController _inputCtrl = TextEditingController();
 
-  final List<Map<String, String>> _messages = [];
+  /// Message type is `Map<String, dynamic>` so Phase 3 can store a `sources`
+  /// key alongside `role` and `content` without breaking the history cache.
+  late List<Map<String, dynamic>> _messages;
   bool _isLoading = false;
   bool _isRebuilding = false;
+
+  @override
+  void initState() {
+    super.initState();
+    // Seed from parent-provided history (copy to avoid aliasing).
+    _messages = List.from(widget.initialMessages);
+  }
 
   @override
   void dispose() {
@@ -77,6 +97,7 @@ class _ChatTabState extends State<ChatTab> {
       _messages.add({'role': 'user', 'content': text});
       _isLoading = true;
     });
+    widget.onMessagesChanged?.call(List.from(_messages));
     _scrollToBottom();
 
     try {
@@ -121,6 +142,12 @@ If you cannot find an answer in the sources, say "I don't have information on th
 SOURCES:
 ${contextBuf.toString()}''';
 
+      // Build the sources list used for clickable citations (Phase 3).
+      // Indexed 0-based: sources[0] → [1], sources[1] → [2], etc.
+      final sourcesList = chunks
+          .map((c) => {'title': c.paperTitle, 'section': c.section})
+          .toList();
+
       String response;
       try {
         response = await widget.bedrockClient.converse(
@@ -142,7 +169,7 @@ ${contextBuf.toString()}''';
             ..writeln(chunks[i].text)
             ..writeln();
         }
-        _addAssistantMessage(buf.toString());
+        _addAssistantMessage(buf.toString(), sources: sourcesList);
         return;
       }
 
@@ -166,7 +193,7 @@ ${contextBuf.toString()}''';
             'Configure AWS credentials for better results.\n\n$response';
       }
 
-      _addAssistantMessage(response);
+      _addAssistantMessage(response, sources: sourcesList);
     } catch (e) {
       _addAssistantMessage('Error: $e');
     } finally {
@@ -175,9 +202,20 @@ ${contextBuf.toString()}''';
     }
   }
 
-  void _addAssistantMessage(String content) {
+  /// Adds an assistant message to [_messages] and notifies the parent.
+  ///
+  /// [sources] is an optional list of `{'title': ..., 'section': ...}` maps
+  /// stored alongside the message for Phase 3 clickable citations. When null,
+  /// no `sources` key is stored (user/error messages have no citations).
+  void _addAssistantMessage(
+    String content, {
+    List<Map<String, String>>? sources,
+  }) {
     if (!mounted) return;
-    setState(() => _messages.add({'role': 'assistant', 'content': content}));
+    final msg = <String, dynamic>{'role': 'assistant', 'content': content};
+    if (sources != null) msg['sources'] = sources;
+    setState(() => _messages.add(msg));
+    widget.onMessagesChanged?.call(List.from(_messages));
   }
 
   Future<void> _handleSuggestion(String suggestion) async {
@@ -219,7 +257,15 @@ ${contextBuf.toString()}''';
             itemBuilder: (context, index) {
               final msg = _messages[index];
               final isUser = msg['role'] == 'user';
+              final content = msg['content'] as String? ?? '';
+              final sources = (msg['sources'] as List?)
+                      ?.map((s) => Map<String, String>.from(s as Map))
+                      .toList() ??
+                  const [];
               return Align(
+                // ValueKey prevents Flutter from swapping recognizer State
+                // between messages when the list scrolls out of view.
+                key: ValueKey(index),
                 alignment: isUser
                     ? Alignment.centerRight
                     : Alignment.centerLeft,
@@ -243,13 +289,20 @@ ${contextBuf.toString()}''';
                           : const Radius.circular(16),
                     ),
                   ),
-                  child: Text(
-                    msg['content']!,
-                    style: TextStyle(
-                      color: isUser ? Colors.white : Colors.black87,
-                      height: 1.4,
-                    ),
-                  ),
+                  child: isUser
+                      ? Text(
+                          content,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            height: 1.4,
+                          ),
+                        )
+                      : _AssistantMessageWidget(
+                          key: ValueKey('msg_$index'),
+                          content: content,
+                          sources: sources,
+                          primaryColor: widget.primaryColor,
+                        ),
                 ),
               );
             },
@@ -347,6 +400,165 @@ ${contextBuf.toString()}''';
           ),
         ),
       ],
+    );
+  }
+}
+
+// ─── Assistant message bubble with clickable [N] citations ────────────────
+
+/// Renders an assistant message as [RichText] with tappable `[N]` citation
+/// markers. Each tap opens an [AlertDialog] showing the referenced paper title
+/// and section from the companion [sources] list.
+///
+/// Owns a [List<TapGestureRecognizer>] that is fully disposed in [dispose],
+/// preventing Flutter framework "pending gesture" debug errors.
+/// Each instance in [ListView.builder] carries a [ValueKey] so Flutter's
+/// element reconciliation never swaps recognizer state between messages.
+class _AssistantMessageWidget extends StatefulWidget {
+  const _AssistantMessageWidget({
+    required super.key,
+    required this.content,
+    required this.sources,
+    required this.primaryColor,
+  });
+
+  final String content;
+
+  /// Parallel list to the `[1]`, `[2]` … markers: `sources[0]` → `[1]`.
+  final List<Map<String, String>> sources;
+  final Color primaryColor;
+
+  @override
+  State<_AssistantMessageWidget> createState() =>
+      _AssistantMessageWidgetState();
+}
+
+class _AssistantMessageWidgetState extends State<_AssistantMessageWidget> {
+  final List<TapGestureRecognizer> _recognizers = [];
+  late List<TextSpan> _spans;
+
+  @override
+  void initState() {
+    super.initState();
+    _spans = _buildSpans();
+  }
+
+  @override
+  void didUpdateWidget(covariant _AssistantMessageWidget oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.content != widget.content ||
+        oldWidget.sources != widget.sources) {
+      _disposeRecognizers();
+      _spans = _buildSpans();
+    }
+  }
+
+  @override
+  void dispose() {
+    _disposeRecognizers();
+    super.dispose();
+  }
+
+  void _disposeRecognizers() {
+    for (final r in _recognizers) {
+      r.dispose();
+    }
+    _recognizers.clear();
+  }
+
+  /// Splits [widget.content] into alternating plain-text and `[N]` spans.
+  /// Creates one [TapGestureRecognizer] per citation token; stores them in
+  /// [_recognizers] so they can be disposed correctly.
+  List<TextSpan> _buildSpans() {
+    final spans = <TextSpan>[];
+    final pattern = RegExp(r'\[(\d+)\]');
+    var lastEnd = 0;
+
+    for (final match in pattern.allMatches(widget.content)) {
+      // Plain text segment before this citation token.
+      if (match.start > lastEnd) {
+        spans.add(TextSpan(
+          text: widget.content.substring(lastEnd, match.start),
+          style: const TextStyle(color: Colors.black87, height: 1.4),
+        ));
+      }
+
+      final n = int.tryParse(match.group(1) ?? '') ?? 0;
+      final recognizer = TapGestureRecognizer()
+        ..onTap = () => _showSourceDialog(n);
+      _recognizers.add(recognizer);
+
+      spans.add(TextSpan(
+        text: match.group(0),
+        style: TextStyle(
+          color: widget.primaryColor,
+          decoration: TextDecoration.underline,
+          decorationColor: widget.primaryColor,
+          height: 1.4,
+        ),
+        recognizer: recognizer,
+      ));
+      lastEnd = match.end;
+    }
+
+    // Remaining plain text after the last citation token.
+    if (lastEnd < widget.content.length) {
+      spans.add(TextSpan(
+        text: widget.content.substring(lastEnd),
+        style: const TextStyle(color: Colors.black87, height: 1.4),
+      ));
+    }
+
+    return spans;
+  }
+
+  void _showSourceDialog(int n) {
+    if (!mounted) return;
+    final idx = n - 1; // sources is 0-indexed; [1] → index 0
+    final source =
+        (idx >= 0 && idx < widget.sources.length) ? widget.sources[idx] : null;
+
+    showDialog<void>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: Text('Source [$n]'),
+        content: source != null
+            ? Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    source['title'] ?? '(unknown paper)',
+                    style: const TextStyle(fontWeight: FontWeight.w600),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    source['section'] ?? '(unknown section)',
+                    style: TextStyle(
+                      color: Colors.grey.shade700,
+                      fontSize: 13,
+                    ),
+                  ),
+                ],
+              )
+            : const Text(
+                'Source not found. The citation number may be outside the '
+                'available sources list.',
+              ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Close'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return RichText(
+      text: TextSpan(children: _spans),
     );
   }
 }

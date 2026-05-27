@@ -1,5 +1,12 @@
 import 'dart:io';
 
+/// Status of the paper workflow.
+///
+/// Transitions: idle → uploaded → extracting → done (or error → uploaded to retry).
+/// The [ActionsPanel] renders different buttons based on this value.
+/// The [_extractPaper] `finally` block is the single owner of cancel-path transitions.
+enum PaperStatus { idle, uploaded, extracting, done, error }
+
 /// Data class holding all extracted metadata for a research paper.
 /// Used as the return type for all PaperController pipeline methods.
 class PaperMetadata {

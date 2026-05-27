@@ -138,9 +138,9 @@ class _ChatTabState extends State<ChatTab> {
         _addAssistantMessage(
           _selectedPapers.isEmpty
               ? 'No papers indexed yet. Save a paper first, or go to '
-                'Settings → Re-index Vault.'
+                    'Settings → Re-index Vault.'
               : 'No results found in the selected papers. '
-                'Try expanding the scope or choosing different papers.',
+                    'Try expanding the scope or choosing different papers.',
         );
         return;
       }
@@ -162,12 +162,15 @@ class _ChatTabState extends State<ChatTab> {
           ..writeln();
       }
 
-      final exampleCites =
-          List.generate(chunks.length, (i) => '[${i + 1}]').join(', ');
+      final exampleCites = List.generate(
+        chunks.length,
+        (i) => '[${i + 1}]',
+      ).join(', ');
 
       // Append Vietnamese output instruction when selected.
-      final langInstruction =
-          _outputLanguage == 'vi' ? '\nRespond entirely in Vietnamese.' : '';
+      final langInstruction = _outputLanguage == 'vi'
+          ? '\nRespond entirely in Vietnamese.'
+          : '';
 
       final systemPrompt =
           'You are a research assistant.$langInstruction\n'
@@ -187,9 +190,12 @@ class _ChatTabState extends State<ChatTab> {
           .toList();
 
       // Sync Extracted Citations panel before the AI responds.
-      final citationStrings = chunks.asMap().entries
-          .map((e) =>
-              '[${e.key + 1}] ${e.value.paperTitle} — ${e.value.section}')
+      final citationStrings = chunks
+          .asMap()
+          .entries
+          .map(
+            (e) => '[${e.key + 1}] ${e.value.paperTitle} — ${e.value.section}',
+          )
           .toList();
       widget.onCitationsUpdated?.call(citationStrings);
 
@@ -223,7 +229,8 @@ class _ChatTabState extends State<ChatTab> {
 
       // Prepend BM25 fallback notice when semantic search was unavailable.
       if (result.usedFallback) {
-        response = '⚠️ Semantic search unavailable — keyword search used. '
+        response =
+            '⚠️ Semantic search unavailable — keyword search used. '
             'Configure AWS credentials for better results.\n\n$response';
       }
 
@@ -252,11 +259,6 @@ class _ChatTabState extends State<ChatTab> {
     widget.onMessagesChanged?.call(List.from(_messages));
   }
 
-  Future<void> _handleSuggestion(String suggestion) async {
-    _inputCtrl.text = suggestion;
-    await _handleSend();
-  }
-
   // ─── Paper scope selector ─────────────────────────────────────────────────
 
   void _showScopeSheet() {
@@ -280,6 +282,38 @@ class _ChatTabState extends State<ChatTab> {
         },
       ),
     );
+  }
+
+  // ─── Clear chat ────────────────────────────────────────────────────────────
+
+  void _clearChat() {
+    if (_messages.isEmpty) return;
+    showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Clear chat?'),
+        content: const Text(
+          'All messages in this conversation will be removed.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: Colors.red.shade400,
+            ),
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Clear'),
+          ),
+        ],
+      ),
+    ).then((confirmed) {
+      if (confirmed != true || !mounted) return;
+      setState(() => _messages.clear());
+      widget.onMessagesChanged?.call(const []);
+    });
   }
 
   // ─── Language toggle ───────────────────────────────────────────────────────
@@ -326,7 +360,8 @@ class _ChatTabState extends State<ChatTab> {
               final msg = _messages[index];
               final isUser = msg['role'] == 'user';
               final content = msg['content'] as String? ?? '';
-              final sources = (msg['sources'] as List?)
+              final sources =
+                  (msg['sources'] as List?)
                       ?.map((s) => Map<String, String>.from(s as Map))
                       .toList() ??
                   const [];
@@ -403,34 +438,34 @@ class _ChatTabState extends State<ChatTab> {
         const Divider(height: 1),
 
         // Quick suggestions
-        Padding(
-          padding: const EdgeInsets.only(left: 12, right: 12, top: 12),
-          child: SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: Wrap(
-              spacing: 8,
-              children:
-                  [
-                        'What are the key findings?',
-                        'Compare research methodologies',
-                        'What limitations are discussed?',
-                      ]
-                      .map(
-                        (s) => ActionChip(
-                          label: Text(s, style: const TextStyle(fontSize: 12)),
-                          backgroundColor: widget.primaryColor.withValues(
-                            alpha: 0.05,
-                          ),
-                          side: BorderSide(
-                            color: widget.primaryColor.withValues(alpha: 0.2),
-                          ),
-                          onPressed: () => _handleSuggestion(s),
-                        ),
-                      )
-                      .toList(),
-            ),
-          ),
-        ),
+        // Padding(
+        //   padding: const EdgeInsets.only(left: 12, right: 12, top: 12),
+        //   child: SingleChildScrollView(
+        //     scrollDirection: Axis.horizontal,
+        //     child: Wrap(
+        //       spacing: 8,
+        //       children:
+        //           [
+        //                 'What are the key findings?',
+        //                 'Compare research methodologies',
+        //                 'What limitations are discussed?',
+        //               ]
+        //               .map(
+        //                 (s) => ActionChip(
+        //                   label: Text(s, style: const TextStyle(fontSize: 12)),
+        //                   backgroundColor: widget.primaryColor.withValues(
+        //                     alpha: 0.05,
+        //                   ),
+        //                   side: BorderSide(
+        //                     color: widget.primaryColor.withValues(alpha: 0.2),
+        //                   ),
+        //                   onPressed: () => _handleSuggestion(s),
+        //                 ),
+        //               )
+        //               .toList(),
+        //     ),
+        //   ),
+        // ),
 
         // Toolbar: scope selector + language toggle
         Padding(
@@ -441,15 +476,13 @@ class _ChatTabState extends State<ChatTab> {
                 avatar: Icon(
                   Icons.filter_list,
                   size: 14,
-                  color: _selectedPapers.isEmpty
-                      ? null
-                      : widget.primaryColor,
+                  color: _selectedPapers.isEmpty ? null : widget.primaryColor,
                 ),
                 label: Text(
                   _selectedPapers.isEmpty
                       ? 'All papers'
                       : '${_selectedPapers.length} paper'
-                        '${_selectedPapers.length == 1 ? '' : 's'}',
+                            '${_selectedPapers.length == 1 ? '' : 's'}',
                   style: const TextStyle(fontSize: 12),
                 ),
                 backgroundColor: _selectedPapers.isEmpty
@@ -463,6 +496,21 @@ class _ChatTabState extends State<ChatTab> {
                 onPressed: _showScopeSheet,
               ),
               const Spacer(),
+              // Clear chat button
+              if (_messages.isNotEmpty)
+                IconButton(
+                  icon: Icon(
+                    Icons.delete_sweep_outlined,
+                    size: 18,
+                    color: Colors.grey.shade500,
+                  ),
+                  tooltip: 'Clear chat',
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(),
+                  visualDensity: VisualDensity.compact,
+                  onPressed: _isLoading ? null : _clearChat,
+                ),
+              const SizedBox(width: 8),
               SegmentedButton<String>(
                 segments: const [
                   ButtonSegment(value: 'en', label: Text('EN')),
@@ -595,10 +643,12 @@ class _AssistantMessageWidgetState extends State<_AssistantMessageWidget> {
     for (final match in pattern.allMatches(widget.content)) {
       // Plain text segment before this citation token.
       if (match.start > lastEnd) {
-        spans.add(TextSpan(
-          text: widget.content.substring(lastEnd, match.start),
-          style: const TextStyle(color: Colors.black87, height: 1.4),
-        ));
+        spans.add(
+          TextSpan(
+            text: widget.content.substring(lastEnd, match.start),
+            style: const TextStyle(color: Colors.black87, height: 1.4),
+          ),
+        );
       }
 
       final n = int.tryParse(match.group(1) ?? '') ?? 0;
@@ -606,25 +656,29 @@ class _AssistantMessageWidgetState extends State<_AssistantMessageWidget> {
         ..onTap = () => _showSourceDialog(n);
       _recognizers.add(recognizer);
 
-      spans.add(TextSpan(
-        text: match.group(0),
-        style: TextStyle(
-          color: widget.primaryColor,
-          decoration: TextDecoration.underline,
-          decorationColor: widget.primaryColor,
-          height: 1.4,
+      spans.add(
+        TextSpan(
+          text: match.group(0),
+          style: TextStyle(
+            color: widget.primaryColor,
+            decoration: TextDecoration.underline,
+            decorationColor: widget.primaryColor,
+            height: 1.4,
+          ),
+          recognizer: recognizer,
         ),
-        recognizer: recognizer,
-      ));
+      );
       lastEnd = match.end;
     }
 
     // Remaining plain text after the last citation token.
     if (lastEnd < widget.content.length) {
-      spans.add(TextSpan(
-        text: widget.content.substring(lastEnd),
-        style: const TextStyle(color: Colors.black87, height: 1.4),
-      ));
+      spans.add(
+        TextSpan(
+          text: widget.content.substring(lastEnd),
+          style: const TextStyle(color: Colors.black87, height: 1.4),
+        ),
+      );
     }
 
     return spans;
@@ -633,8 +687,9 @@ class _AssistantMessageWidgetState extends State<_AssistantMessageWidget> {
   void _showSourceDialog(int n) {
     if (!mounted) return;
     final idx = n - 1; // sources is 0-indexed; [1] → index 0
-    final source =
-        (idx >= 0 && idx < widget.sources.length) ? widget.sources[idx] : null;
+    final source = (idx >= 0 && idx < widget.sources.length)
+        ? widget.sources[idx]
+        : null;
 
     showDialog<void>(
       context: context,
@@ -652,10 +707,7 @@ class _AssistantMessageWidgetState extends State<_AssistantMessageWidget> {
                   const SizedBox(height: 8),
                   Text(
                     source['section'] ?? '(unknown section)',
-                    style: TextStyle(
-                      color: Colors.grey.shade700,
-                      fontSize: 13,
-                    ),
+                    style: TextStyle(color: Colors.grey.shade700, fontSize: 13),
                   ),
                 ],
               )
@@ -675,9 +727,7 @@ class _AssistantMessageWidgetState extends State<_AssistantMessageWidget> {
 
   @override
   Widget build(BuildContext context) {
-    return RichText(
-      text: TextSpan(children: _spans),
-    );
+    return RichText(text: TextSpan(children: _spans));
   }
 }
 
@@ -735,10 +785,7 @@ class _PaperScopeSheetState extends State<_PaperScopeSheet> {
               children: [
                 const Text(
                   'Scope search to papers',
-                  style: TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.bold,
-                  ),
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
                 ),
                 Row(
                   children: [

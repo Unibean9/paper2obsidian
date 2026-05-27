@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:path/path.dart' as p;
@@ -8,6 +9,7 @@ import '../constants/messages.dart';
 import '../models/paper_metadata.dart';
 import '../services/api_service.dart';
 import '../services/logger_service.dart';
+import '../services/vault_index_service.dart';
 import '../utils/title_inference.dart';
 
 /// Plain Dart class that owns all business logic for the paper processing pipeline.
@@ -18,12 +20,21 @@ class PaperController {
   PaperController({
     required this.apiService,
     required this.onLog,
+    this.vaultIndexService,
+    this.onIndexingStatus,
   });
 
   final ResearchApiService apiService;
 
   /// Callback for progress log messages — called during async pipelines.
   final void Function(String message) onLog;
+
+  /// Optional vault index service — when set, triggers background indexing after save.
+  final VaultIndexService? vaultIndexService;
+
+  /// Called with a status string when background indexing starts, and with
+  /// `null` when it completes (or fails) — used to drive a progress indicator.
+  final void Function(String? message)? onIndexingStatus;
 
   /// Cooperative cancellation flag — set to true by cancel(), checked by async pipelines.
   bool isCancelled = false;
@@ -242,8 +253,7 @@ class PaperController {
         '';
 
     final String venue =
-        (openalexData['venue'] as String?) ??
-        (grobidData['abstract']?.toString().split('\n').first ?? '');
+        (openalexData['venue'] as String?) ?? '';
 
     final String year =
         (openalexData['year'] as String?) ??
@@ -281,6 +291,8 @@ class PaperController {
         ? List<String>.from(grobidData['citations'])
         : [];
 
+    final String abstract = grobidData['abstract']?.toString().trim() ?? '';
+
     return PaperMetadata(
       title: title,
       authors: authors,
@@ -292,6 +304,7 @@ class PaperController {
       problemStatement: problemStatement,
       limitation: limitation,
       summary: summary,
+      abstract: abstract,
       citations: citations,
       fullPdfText: fullPdfText,
       resolvedPdf: resolvedPdf,
@@ -373,6 +386,9 @@ class PaperController {
         Uri.encodeFull(destPdf.path.replaceAll(r'\', '/'));
     final String pdfFileUri = '<file:///$encodedPdfPath>';
 
+    final String abstractText =
+        meta.abstract.isNotEmpty ? meta.abstract : '*Abstract not available*';
+
     final String markdownContent = '''---
 title: "${meta.title.replaceAll('"', '\\"')}"
 authors:${formatYamlList(meta.authors, "Authors")}
@@ -384,6 +400,9 @@ keywords:${formatYamlList(meta.keywords, "Tags")}
 # ${meta.title}
 
 **Source PDF:** [Open Paper]($pdfFileUri) $pdfLink
+
+## Abstract
+$abstractText
 
 ## 1. Summary
 ${meta.summary}
@@ -414,6 +433,30 @@ ${meta.summary}
     }
     if (meta.venue.isNotEmpty) {
       await _createInternalNotes(meta.venue, 'Venues', vaultPath);
+    }
+
+    // Background indexing — must NOT be awaited so the save returns immediately.
+    // Errors are non-fatal: log and clear the progress indicator.
+    if (vaultIndexService != null) {
+      onIndexingStatus?.call('Updating vault index…');
+      // Safety timeout: always clear the indicator even if indexing hangs.
+      final clearTimer = Timer(const Duration(seconds: 30), () {
+        onIndexingStatus?.call(null);
+      });
+      () async {
+        try {
+          await vaultIndexService!.indexPaper(meta, vaultPath);
+        } catch (e) {
+          AppLogger.log(
+            'Background indexing failed',
+            category: LogCategory.other,
+            error: e,
+          );
+        } finally {
+          clearTimer.cancel();
+          onIndexingStatus?.call(null);
+        }
+      }();
     }
   }
 

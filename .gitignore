@@ -109,3 +109,6 @@ plans/*
 .claude/*
 .ck.json
 .mcp.json
+
+# Vault index cache (generated at runtime, must not be committed)
+.paper2obsidian/

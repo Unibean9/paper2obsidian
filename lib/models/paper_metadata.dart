@@ -14,6 +14,7 @@ class PaperMetadata {
     this.problemStatement = '',
     this.limitation = '',
     this.summary = '',
+    this.abstract = '',
     this.citations = const [],
     this.fullPdfText = '',
     this.resolvedPdf,
@@ -32,6 +33,10 @@ class PaperMetadata {
   final String problemStatement;
   final String limitation;
   final String summary;
+
+  /// Abstract text extracted from Grobid XML, or empty if unavailable.
+  final String abstract;
+
   final List<String> citations;
 
   /// Full extracted PDF text (≤10 pages), used for Bedrock summarization and AI chat.

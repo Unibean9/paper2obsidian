@@ -12,6 +12,7 @@ import '../models/paper_metadata.dart';
 import '../services/api_service.dart';
 import '../services/bedrock_client.dart';
 import '../services/logger_service.dart';
+import '../services/vault_index_service.dart';
 import '../utils/desktop_file_helper.dart';
 import '../utils/vault_access.dart';
 import '../widgets/actions_panel.dart';
@@ -40,10 +41,16 @@ class _MainScreenState extends State<MainScreen> {
   // NOTE: _isCancelled is NOT in Bucket A — it lives in PaperController.isCancelled (single source of truth)
   String statusText = AppMessages.get(MessageKey.statusReady);
   String fullPdfText = '';
-  List<Map<String, String>> chatMessages = [];
-  bool isChatLoading = false;
   List<String> paperCitations = [];
   List<String> progressLogs = [];
+
+  // Vault index state (Phase 6)
+  bool _indexStale = false;
+  bool _bannerDismissed = false;
+
+  // Holds the last extracted abstract so it survives through to saveToObsidian.
+  // Not shown in the form (read-only pipeline output).
+  String _paperAbstract = '';
 
   // =========================================================================
   // BUCKET B — Form controllers (created and disposed by this screen)
@@ -62,7 +69,9 @@ class _MainScreenState extends State<MainScreen> {
   // =========================================================================
   // SERVICES AND CONTROLLER
   // =========================================================================
+  late BedrockClient _bedrockClient;
   late ResearchApiService researchApiService;
+  late VaultIndexService _vaultIndexService;
   late PaperController _paperController;
 
   // GlobalKey for triggering LibraryTab refresh after save
@@ -71,14 +80,21 @@ class _MainScreenState extends State<MainScreen> {
   @override
   void initState() {
     super.initState();
+    // Share one BedrockClient instance between the API service and the index service.
+    _bedrockClient = BedrockClient(config: BedrockConfig.fromEnvironment());
     researchApiService = ResearchApiService(
       grobidUrl: 'http://localhost:8070',
-      bedrockClient: BedrockClient(config: BedrockConfig.fromEnvironment()),
+      bedrockClient: _bedrockClient,
     );
+    _vaultIndexService = VaultIndexService(bedrockClient: _bedrockClient);
     _paperController = PaperController(
       apiService: researchApiService,
       onLog: _addLog,
-      // No onStateChange: controller only returns data; screen calls setState after each await
+      vaultIndexService: _vaultIndexService,
+      onIndexingStatus: (msg) {
+        if (!mounted) return;
+        setState(() => statusText = msg ?? AppMessages.get(MessageKey.statusReady));
+      },
     );
     _loadSettings();
   }
@@ -118,6 +134,10 @@ class _MainScreenState extends State<MainScreen> {
       vaultPath = rawPath.isEmpty ? '' : p.normalize(rawPath);
     });
     // LibraryTab reloads automatically via didUpdateWidget when vaultPath changes
+    if (vaultPath.isNotEmpty) {
+      await _vaultIndexService.loadIndex(vaultPath);
+      await _checkStaleness();
+    }
   }
 
   Future<void> _saveSettings() async {
@@ -214,7 +234,19 @@ class _MainScreenState extends State<MainScreen> {
         onSave: (newPath) async {
           setState(() => vaultPath = newPath);
           await _saveSettings();
+          // Reload index for the new vault path
+          if (newPath.isNotEmpty) {
+            await _vaultIndexService.loadIndex(newPath);
+            await _checkStaleness();
+          }
         },
+        onReindex: vaultPath.isEmpty
+            ? null
+            : () async {
+                await _vaultIndexService.indexVault(vaultPath);
+                if (mounted) setState(() => _indexStale = false);
+                return _vaultIndexService.loadedPaperCount();
+              },
       ),
     );
   }
@@ -250,7 +282,6 @@ class _MainScreenState extends State<MainScreen> {
       setState(() {
         selectedPdf = file;
         statusText = AppMessages.statusSelectedPdf(p.basename(file.path));
-        chatMessages.clear();
         fullPdfText = '';
         isLoading = true;
         progressLogs.clear();
@@ -262,12 +293,6 @@ class _MainScreenState extends State<MainScreen> {
         // and returned PaperMetadata.empty() — do not overwrite already-populated fields.
         if (mounted && !_paperController.isCancelled) {
           _applyMetadata(meta);
-          setState(() {
-            chatMessages.add({
-              'role': 'assistant',
-              'content': AppMessages.get(MessageKey.chatInitialGreeting),
-            });
-          });
         }
       } catch (e) {
         AppLogger.log(
@@ -309,6 +334,7 @@ class _MainScreenState extends State<MainScreen> {
         problemStatement: _problemCtrl.text,
         limitation: _limitationCtrl.text,
         summary: _summaryCtrl.text,
+        abstract: _paperAbstract,
         fullPdfText: fullPdfText,
         resolvedPdf: selectedPdf,
       );
@@ -348,7 +374,6 @@ class _MainScreenState extends State<MainScreen> {
     setState(() {
       isLoading = true;
       progressLogs.clear();
-      chatMessages.clear();
     });
     _addLog(AppMessages.statusLoadingPaper(p.basename(mdPath)));
 
@@ -357,12 +382,6 @@ class _MainScreenState extends State<MainScreen> {
           await _paperController.openPaperFromLibrary(mdPath);
       if (mounted) {
         _applyMetadata(meta);
-        setState(() {
-          chatMessages.add({
-            'role': 'assistant',
-            'content': AppMessages.get(MessageKey.chatLibraryGreeting),
-          });
-        });
       }
     } catch (e) {
       AppLogger.log(
@@ -381,28 +400,44 @@ class _MainScreenState extends State<MainScreen> {
   }
 
   // =========================================================================
-  // AI CHAT
+  // VAULT INDEX
   // =========================================================================
 
-  Future<void> _handleSendMessage(String userText) async {
-    setState(() {
-      chatMessages.add({'role': 'user', 'content': userText});
-      isChatLoading = true;
-    });
+  /// Checks whether the persisted paper count is less than the current
+  /// number of `.md` files in `Papers/`. Sets `_indexStale` if outdated.
+  Future<void> _checkStaleness() async {
+    if (vaultPath.isEmpty) return;
     try {
-      final String reply =
-          await _paperController.sendChatMessage(userText, fullPdfText);
-      if (mounted) {
-        setState(() =>
-            chatMessages.add({'role': 'assistant', 'content': reply}));
+      final paperDir = Directory(p.join(vaultPath, 'Papers'));
+      if (!await paperDir.exists()) return;
+      final mdCount = paperDir
+          .listSync()
+          .whereType<File>()
+          .where((f) => f.path.endsWith('.md'))
+          .length;
+      if (mdCount > _vaultIndexService.loadedPaperCount()) {
+        if (mounted) setState(() => _indexStale = true);
       }
     } catch (e) {
+      AppLogger.log('_checkStaleness failed', category: LogCategory.other, error: e);
+    }
+  }
+
+  /// Triggered by the staleness banner "Rebuild" button.
+  Future<void> _rebuildIndex() async {
+    try {
+      await _vaultIndexService.indexVault(vaultPath);
+      if (mounted) setState(() => _indexStale = false);
+    } catch (e) {
+      AppLogger.log('Vault reindex failed', category: LogCategory.other, error: e);
       if (mounted) {
-        setState(() => chatMessages
-            .add({'role': 'assistant', 'content': AppMessages.errorChat(e)}));
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Vault re-index failed: $e'),
+            backgroundColor: Colors.red.shade700,
+          ),
+        );
       }
-    } finally {
-      if (mounted) setState(() => isChatLoading = false);
     }
   }
 
@@ -437,6 +472,8 @@ class _MainScreenState extends State<MainScreen> {
       _limitationCtrl.text = meta.limitation;
       _summaryCtrl.text = meta.summary;
       paperCitations = meta.citations;
+      // Abstract is pipeline-only (not editable); preserve for saveToObsidian.
+      _paperAbstract = meta.abstract;
       // Apply Bucket A fields from metadata result
       if (meta.fullPdfText.isNotEmpty) fullPdfText = meta.fullPdfText;
       if (meta.resolvedPdf != null) selectedPdf = meta.resolvedPdf;
@@ -569,13 +606,16 @@ class _MainScreenState extends State<MainScreen> {
                               summaryCtrl: _summaryCtrl,
                             ),
 
-                            // TAB 2: AI CHAT ASSISTANT
+                            // TAB 2: VAULT RAG CHAT
                             ChatTab(
-                              chatMessages: chatMessages,
-                              fullPdfText: fullPdfText,
-                              isChatLoading: isChatLoading,
-                              onSendMessage: _handleSendMessage,
+                              vaultIndexService: _vaultIndexService,
+                              bedrockClient: _bedrockClient,
                               primaryColor: primaryColor,
+                              showStaleBanner:
+                                  _indexStale && !_bannerDismissed,
+                              onRebuildIndex: _rebuildIndex,
+                              onDismissBanner: () => setState(
+                                  () => _bannerDismissed = true),
                             ),
 
                             // TAB 3: CITATIONS SCREEN

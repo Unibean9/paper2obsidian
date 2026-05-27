@@ -28,12 +28,17 @@ class SettingsDialog extends StatefulWidget {
     super.key,
     required this.initialVaultPath,
     required this.onSave,
+    this.onReindex,
   });
 
   final String initialVaultPath;
 
   /// Called with the validated new vault path when the user taps "Save Changes".
   final Future<void> Function(String newPath) onSave;
+
+  /// Called when the user taps "Re-index Vault". Returns the paper count on
+  /// success. Pass `null` to hide the button (e.g., when no vault is set).
+  final Future<int> Function()? onReindex;
 
   @override
   State<SettingsDialog> createState() => _SettingsDialogState();
@@ -46,8 +51,12 @@ class _SettingsDialogState extends State<SettingsDialog> {
   /// Using inline Text instead of ScaffoldMessenger — the dialog context
   /// has no Scaffold ancestor so SnackBars would throw.
   String? _errorMessage;
-
   bool _isSaving = false;
+
+  // Re-index state
+  bool _isIndexing = false;
+  String? _indexResult;
+  String? _indexError;
 
   @override
   void initState() {
@@ -81,6 +90,22 @@ class _SettingsDialogState extends State<SettingsDialog> {
       _vaultCtrl.text = path;
       _errorMessage = null;
     });
+  }
+
+  Future<void> _onReindex() async {
+    setState(() {
+      _isIndexing = true;
+      _indexResult = null;
+      _indexError = null;
+    });
+    try {
+      final count = await widget.onReindex!();
+      if (mounted) setState(() => _indexResult = 'Vault indexed — $count papers');
+    } catch (e) {
+      if (mounted) setState(() => _indexError = 'Re-index failed: $e');
+    } finally {
+      if (mounted) setState(() => _isIndexing = false);
+    }
   }
 
   Future<void> _onSave() async {
@@ -150,6 +175,44 @@ class _SettingsDialogState extends State<SettingsDialog> {
                   ),
                 ),
               const SizedBox(height: 8),
+
+              // Re-index Vault section — only shown when callback is provided
+              if (widget.onReindex != null) ...[
+                const Divider(height: 24),
+                Row(
+                  children: [
+                    Expanded(
+                      child: FilledButton.tonalIcon(
+                        onPressed: _isIndexing ? null : _onReindex,
+                        icon: _isIndexing
+                            ? const SizedBox(
+                                width: 16,
+                                height: 16,
+                                child: CircularProgressIndicator(strokeWidth: 2),
+                              )
+                            : const Icon(Icons.refresh, size: 18),
+                        label: const Text('Re-index Vault'),
+                      ),
+                    ),
+                  ],
+                ),
+                if (_indexResult != null)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 6),
+                    child: Text(
+                      _indexResult!,
+                      style: TextStyle(fontSize: 12, color: Colors.green.shade700),
+                    ),
+                  ),
+                if (_indexError != null)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 6),
+                    child: Text(
+                      _indexError!,
+                      style: TextStyle(fontSize: 12, color: Colors.red.shade700),
+                    ),
+                  ),
+              ],
             ],
           ),
         ),

@@ -726,7 +726,9 @@ class _PaperScopeSheetState extends State<_PaperScopeSheet> {
                 Row(
                   children: [
                     TextButton(
-                      onPressed: () => setState(() => _selected.clear()),
+                      onPressed: () => setState(() {
+                        _selected = List.from(widget.availablePapers);
+                      }),
                       child: const Text('All'),
                     ),
                     FilledButton(

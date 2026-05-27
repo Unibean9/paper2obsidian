@@ -774,6 +774,10 @@ class _MainScreenState extends State<MainScreen> {
                                 _chatHistory[_currentPaperPath ?? _globalChatKey] ?? [],
                               ),
                               onMessagesChanged: _onChatMessagesChanged,
+                              onCitationsUpdated: (citations) {
+                                if (!mounted) return;
+                                setState(() => paperCitations = citations);
+                              },
                             ),
 
                             // TAB 3: CITATIONS SCREEN

@@ -1,5 +1,6 @@
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../services/bedrock_client.dart';
 import '../services/vault_index_service.dart';
@@ -22,6 +23,7 @@ class ChatTab extends StatefulWidget {
     this.onDismissBanner,
     this.initialMessages = const [],
     this.onMessagesChanged,
+    this.onCitationsUpdated,
   });
 
   final VaultIndexService vaultIndexService;
@@ -45,6 +47,11 @@ class ChatTab extends StatefulWidget {
   /// The parent uses this to keep [_chatHistory] in sync for persistence.
   final void Function(List<Map<String, dynamic>> messages)? onMessagesChanged;
 
+  /// Fired after each successful RAG response with the formatted citation list.
+  /// Parent screen uses this to keep the Extracted Citations panel in sync.
+  /// Each entry is formatted as "[N] PaperTitle — Section".
+  final void Function(List<String> citations)? onCitationsUpdated;
+
   @override
   State<ChatTab> createState() => _ChatTabState();
 }
@@ -53,17 +60,37 @@ class _ChatTabState extends State<ChatTab> {
   final ScrollController _scrollCtrl = ScrollController();
   final TextEditingController _inputCtrl = TextEditingController();
 
-  /// Message type is `Map<String, dynamic>` so Phase 3 can store a `sources`
-  /// key alongside `role` and `content` without breaking the history cache.
+  /// Message type is `Map<String, dynamic>` so the `sources` key can be stored
+  /// alongside `role` and `content` without breaking the history cache.
   late List<Map<String, dynamic>> _messages;
   bool _isLoading = false;
   bool _isRebuilding = false;
+
+  // ── Paper scope selector (Phase 3) ────────────────────────────────────────
+  /// Papers selected for scoped RAG queries. Empty = all papers (default).
+  List<String> _selectedPapers = [];
+
+  /// Available paper titles for the scope selector bottom sheet.
+  List<String> _availablePapers = [];
+
+  // ── Output language toggle (Phase 4) ─────────────────────────────────────
+  /// Output language: 'en' = English (default), 'vi' = Vietnamese.
+  String _outputLanguage = 'en';
 
   @override
   void initState() {
     super.initState();
     // Seed from parent-provided history (copy to avoid aliasing).
     _messages = List.from(widget.initialMessages);
+    // Load available indexed papers for the scope selector.
+    _availablePapers = widget.vaultIndexService.getIndexedPaperTitles();
+    // Load persisted language preference; default 'en' used until loaded.
+    SharedPreferences.getInstance().then((prefs) {
+      if (!mounted) return;
+      setState(() {
+        _outputLanguage = prefs.getString('chat_output_language') ?? 'en';
+      });
+    });
   }
 
   @override
@@ -101,12 +128,19 @@ class _ChatTabState extends State<ChatTab> {
     _scrollToBottom();
 
     try {
-      final result = await widget.vaultIndexService.query(text, topK: 5);
+      final result = await widget.vaultIndexService.query(
+        text,
+        topK: 5,
+        paperFilter: _selectedPapers.isEmpty ? null : _selectedPapers,
+      );
 
       if (result.chunks.isEmpty) {
         _addAssistantMessage(
-          'No papers indexed yet. Save a paper first, or go to '
-          'Settings → Re-index Vault.',
+          _selectedPapers.isEmpty
+              ? 'No papers indexed yet. Save a paper first, or go to '
+                'Settings → Re-index Vault.'
+              : 'No results found in the selected papers. '
+                'Try expanding the scope or choosing different papers.',
         );
         return;
       }
@@ -116,37 +150,48 @@ class _ChatTabState extends State<ChatTab> {
           .where((c) => seen.add('${c.paperTitle}::${c.section}'))
           .toList();
 
-      // Build numbered attribution context.
+      // Build numbered attribution context — include full chunk text so the
+      // model has depth to answer without needing a trailing Sources list.
       final contextBuf = StringBuffer();
       for (int i = 0; i < chunks.length; i++) {
         contextBuf
-          ..writeln('[${i + 1}] ${chunks[i].paperTitle} | ${chunks[i].section}')
+          ..writeln(
+            '[${i + 1}] Paper: "${chunks[i].paperTitle}" | Section: ${chunks[i].section}',
+          )
           ..writeln(chunks[i].text)
           ..writeln();
       }
 
-      final exampleCites = List.generate(
-        chunks.length,
-        (i) => '[${i + 1}]',
-      ).join(', ');
+      final exampleCites =
+          List.generate(chunks.length, (i) => '[${i + 1}]').join(', ');
+
+      // Append Vietnamese output instruction when selected.
+      final langInstruction =
+          _outputLanguage == 'vi' ? '\nRespond entirely in Vietnamese.' : '';
 
       final systemPrompt =
-          '''You are a research assistant.
-Use ONLY the numbered sources below to answer the question.
-After each sentence that uses a source, write its number in brackets.
-Example: "Agile teams use sprints [1]. Requirements change frequently [2]."
-Available citation numbers: $exampleCites
-End your answer with a "Sources:" section that lists every number you cited.
-If you cannot find an answer in the sources, say "I don't have information on that."
+          'You are a research assistant.$langInstruction\n'
+          'Use ONLY the numbered sources below to answer the question.\n'
+          'After each claim or sentence that references a source, cite it '
+          'with its number in brackets, e.g. [1] or [2].\n'
+          'Available citation numbers: $exampleCites\n'
+          'Do NOT add a "Sources:" section at the end — '
+          'inline citations are sufficient.\n'
+          'If you cannot find an answer in the sources, '
+          'say "I don\'t have information on that."\n'
+          '\nSOURCES:\n${contextBuf.toString()}';
 
-SOURCES:
-${contextBuf.toString()}''';
-
-      // Build the sources list used for clickable citations (Phase 3).
-      // Indexed 0-based: sources[0] → [1], sources[1] → [2], etc.
-      final sourcesList = chunks
+      // 0-based: sources[0] → [1], sources[1] → [2], etc.
+      final List<Map<String, String>> sourcesList = chunks
           .map((c) => {'title': c.paperTitle, 'section': c.section})
           .toList();
+
+      // Sync Extracted Citations panel before the AI responds.
+      final citationStrings = chunks.asMap().entries
+          .map((e) =>
+              '[${e.key + 1}] ${e.value.paperTitle} — ${e.value.section}')
+          .toList();
+      widget.onCitationsUpdated?.call(citationStrings);
 
       String response;
       try {
@@ -155,8 +200,7 @@ ${contextBuf.toString()}''';
           userMessage: text,
         );
       } on BedrockUnconfiguredException {
-        // AWS not configured — surface the retrieved context as a plain list
-        // rather than showing a raw exception.
+        // AWS not configured — surface the retrieved context as a plain list.
         final buf = StringBuffer(
           '⚠️ AWS Bedrock is not configured — cannot synthesise an answer.\n\n'
           'Relevant sources found in vault:\n\n',
@@ -173,23 +217,13 @@ ${contextBuf.toString()}''';
         return;
       }
 
-      // Always strip any model-generated "Sources:" block (may be incomplete)
-      // and replace with the app-controlled version that has full paper details.
+      // Strip any trailing Sources block the model may still emit defensively.
       final sourcesRe = RegExp(r'\n*Sources:.*$', dotAll: true);
       response = response.replaceFirst(sourcesRe, '').trimRight();
 
-      final sourceLines = StringBuffer('\n\nSources:\n');
-      for (int i = 0; i < chunks.length; i++) {
-        sourceLines.writeln(
-          '[${i + 1}] ${chunks[i].paperTitle} — ${chunks[i].section}',
-        );
-      }
-      response += sourceLines.toString();
-
       // Prepend BM25 fallback notice when semantic search was unavailable.
       if (result.usedFallback) {
-        response =
-            '⚠️ Semantic search unavailable — keyword search used. '
+        response = '⚠️ Semantic search unavailable — keyword search used. '
             'Configure AWS credentials for better results.\n\n$response';
       }
 
@@ -221,6 +255,40 @@ ${contextBuf.toString()}''';
   Future<void> _handleSuggestion(String suggestion) async {
     _inputCtrl.text = suggestion;
     await _handleSend();
+  }
+
+  // ─── Paper scope selector ─────────────────────────────────────────────────
+
+  void _showScopeSheet() {
+    // Refresh the list when the sheet opens (index may have updated).
+    setState(() {
+      _availablePapers = widget.vaultIndexService.getIndexedPaperTitles();
+    });
+
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) => _PaperScopeSheet(
+        availablePapers: _availablePapers,
+        selectedPapers: List.from(_selectedPapers),
+        onChanged: (selected) {
+          setState(() => _selectedPapers = selected);
+          Navigator.of(ctx).pop();
+        },
+      ),
+    );
+  }
+
+  // ─── Language toggle ───────────────────────────────────────────────────────
+
+  void _setOutputLanguage(String lang) {
+    setState(() => _outputLanguage = lang);
+    SharedPreferences.getInstance().then(
+      (prefs) => prefs.setString('chat_output_language', lang),
+    );
   }
 
   // ─── Rebuild banner action ─────────────────────────────────────────────────
@@ -364,6 +432,54 @@ ${contextBuf.toString()}''';
           ),
         ),
 
+        // Toolbar: scope selector + language toggle
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+          child: Row(
+            children: [
+              ActionChip(
+                avatar: Icon(
+                  Icons.filter_list,
+                  size: 14,
+                  color: _selectedPapers.isEmpty
+                      ? null
+                      : widget.primaryColor,
+                ),
+                label: Text(
+                  _selectedPapers.isEmpty
+                      ? 'All papers'
+                      : '${_selectedPapers.length} paper'
+                        '${_selectedPapers.length == 1 ? '' : 's'}',
+                  style: const TextStyle(fontSize: 12),
+                ),
+                backgroundColor: _selectedPapers.isEmpty
+                    ? null
+                    : widget.primaryColor.withValues(alpha: 0.08),
+                side: _selectedPapers.isEmpty
+                    ? null
+                    : BorderSide(
+                        color: widget.primaryColor.withValues(alpha: 0.3),
+                      ),
+                onPressed: _showScopeSheet,
+              ),
+              const Spacer(),
+              SegmentedButton<String>(
+                segments: const [
+                  ButtonSegment(value: 'en', label: Text('EN')),
+                  ButtonSegment(value: 'vi', label: Text('VI')),
+                ],
+                selected: {_outputLanguage},
+                onSelectionChanged: (s) => _setOutputLanguage(s.first),
+                style: SegmentedButton.styleFrom(
+                  visualDensity: VisualDensity.compact,
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  textStyle: const TextStyle(fontSize: 12),
+                ),
+              ),
+            ],
+          ),
+        ),
+
         // Input row
         Padding(
           padding: const EdgeInsets.all(12.0),
@@ -373,7 +489,9 @@ ${contextBuf.toString()}''';
                 child: TextField(
                   controller: _inputCtrl,
                   decoration: InputDecoration(
-                    hintText: 'Ask across all vault papers…',
+                    hintText: _selectedPapers.isEmpty
+                        ? 'Ask across all vault papers…'
+                        : 'Ask ${_selectedPapers.length == 1 ? '"${_selectedPapers.first}"' : '${_selectedPapers.length} selected papers'}…',
                     contentPadding: const EdgeInsets.symmetric(
                       horizontal: 16,
                       vertical: 12,
@@ -559,6 +677,118 @@ class _AssistantMessageWidgetState extends State<_AssistantMessageWidget> {
   Widget build(BuildContext context) {
     return RichText(
       text: TextSpan(children: _spans),
+    );
+  }
+}
+
+// ─── Paper scope selector bottom sheet ────────────────────────────────────
+
+/// Bottom sheet that lets the user pick which indexed vault papers to
+/// restrict the RAG query to. Closing without applying preserves the prior
+/// selection. Tapping "Apply" calls [onChanged] with the new selection list.
+class _PaperScopeSheet extends StatefulWidget {
+  const _PaperScopeSheet({
+    required this.availablePapers,
+    required this.selectedPapers,
+    required this.onChanged,
+  });
+
+  final List<String> availablePapers;
+  final List<String> selectedPapers;
+  final void Function(List<String>) onChanged;
+
+  @override
+  State<_PaperScopeSheet> createState() => _PaperScopeSheetState();
+}
+
+class _PaperScopeSheetState extends State<_PaperScopeSheet> {
+  late List<String> _selected;
+
+  @override
+  void initState() {
+    super.initState();
+    _selected = List.from(widget.selectedPapers);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return DraggableScrollableSheet(
+      initialChildSize: 0.5,
+      maxChildSize: 0.85,
+      expand: false,
+      builder: (ctx, scrollCtrl) => Column(
+        children: [
+          // Handle
+          Container(
+            margin: const EdgeInsets.only(top: 12, bottom: 4),
+            width: 36,
+            height: 4,
+            decoration: BoxDecoration(
+              color: Colors.grey.shade300,
+              borderRadius: BorderRadius.circular(2),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 8, 12, 8),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                const Text(
+                  'Scope search to papers',
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                Row(
+                  children: [
+                    TextButton(
+                      onPressed: () => setState(() => _selected.clear()),
+                      child: const Text('All'),
+                    ),
+                    FilledButton(
+                      onPressed: () => widget.onChanged(List.from(_selected)),
+                      child: const Text('Apply'),
+                    ),
+                    const SizedBox(width: 8),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          const Divider(height: 1),
+          if (widget.availablePapers.isEmpty)
+            const Expanded(
+              child: Center(
+                child: Text(
+                  'No papers indexed yet.',
+                  style: TextStyle(color: Colors.grey),
+                ),
+              ),
+            )
+          else
+            Expanded(
+              child: ListView.builder(
+                controller: scrollCtrl,
+                itemCount: widget.availablePapers.length,
+                itemBuilder: (_, i) {
+                  final title = widget.availablePapers[i];
+                  return CheckboxListTile(
+                    title: Text(title, style: const TextStyle(fontSize: 13)),
+                    value: _selected.contains(title),
+                    onChanged: (checked) => setState(() {
+                      if (checked == true) {
+                        _selected.add(title);
+                      } else {
+                        _selected.remove(title);
+                      }
+                    }),
+                  );
+                },
+              ),
+            ),
+        ],
+      ),
     );
   }
 }

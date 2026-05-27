@@ -51,4 +51,38 @@ class PaperMetadata {
 
   /// The actual PDF File resolved during processing or library open (may be null before processing).
   final File? resolvedPdf;
+
+  /// Returns a copy of this instance with the specified fields replaced.
+  PaperMetadata copyWith({
+    String? title,
+    String? authors,
+    String? venue,
+    String? year,
+    String? doi,
+    String? keywords,
+    String? dataset,
+    String? problemStatement,
+    String? limitation,
+    String? summary,
+    String? abstract,
+    List<String>? citations,
+    String? fullPdfText,
+    File? resolvedPdf,
+  }) =>
+      PaperMetadata(
+        title: title ?? this.title,
+        authors: authors ?? this.authors,
+        venue: venue ?? this.venue,
+        year: year ?? this.year,
+        doi: doi ?? this.doi,
+        keywords: keywords ?? this.keywords,
+        dataset: dataset ?? this.dataset,
+        problemStatement: problemStatement ?? this.problemStatement,
+        limitation: limitation ?? this.limitation,
+        summary: summary ?? this.summary,
+        abstract: abstract ?? this.abstract,
+        citations: citations ?? this.citations,
+        fullPdfText: fullPdfText ?? this.fullPdfText,
+        resolvedPdf: resolvedPdf ?? this.resolvedPdf,
+      );
 }

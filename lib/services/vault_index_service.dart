@@ -105,6 +105,11 @@ class VaultIndexService {
   /// Number of distinct papers currently loaded in memory.
   int loadedPaperCount() => _paperCount;
 
+  /// Returns distinct paper titles currently loaded in memory, sorted
+  /// alphabetically. Used by the paper scope selector in ChatTab.
+  List<String> getIndexedPaperTitles() =>
+      (_chunks.map((c) => c.paperTitle).toSet().toList()..sort());
+
   // ─── Load ──────────────────────────────────────────────────────────────────
 
   /// Loads the persisted index into memory.
@@ -231,7 +236,14 @@ class VaultIndexService {
   /// Semantic (cosine) search when AWS is configured;
   /// BM25 fallback when [BedrockUnconfiguredException] is thrown.
   /// Returns an empty result — never throws — when the index has no chunks.
-  Future<QueryResult> query(String question, {int topK = 5}) async {
+  ///
+  /// [paperFilter]: when non-empty, only chunks whose [ChunkRecord.paperTitle]
+  /// is in this list are considered. Pass null (default) to search all papers.
+  Future<QueryResult> query(
+    String question, {
+    int topK = 5,
+    List<String>? paperFilter,
+  }) async {
     if (_chunks.isEmpty) {
       AppLogger.log(
         'RAG query: index empty — no papers indexed yet',
@@ -242,12 +254,17 @@ class VaultIndexService {
 
     try {
       final queryVec = await bedrockClient.embed(question);
+      // Apply paper-scope filter when provided.
+      final scopedChunks = (paperFilter != null && paperFilter.isNotEmpty)
+          ? _chunks.where((c) => paperFilter.contains(c.paperTitle)).toList()
+          : _chunks;
       // Only cosine-score chunks that have a real embedding vector.
       // BM25-only chunks (empty embedding) are excluded from the semantic path
       // but remain searchable via the BM25 fallback.
-      final embeddable = _chunks.where((c) => c.embedding.isNotEmpty).toList();
+      final embeddable =
+          scopedChunks.where((c) => c.embedding.isNotEmpty).toList();
       if (embeddable.isEmpty) {
-        return _bm25Query(question, topK: topK);
+        return _bm25Query(question, topK: topK, paperFilter: paperFilter);
       }
       final scored = embeddable
           .map((c) => _Scored(dotProduct(queryVec, c.embedding), c))
@@ -266,19 +283,28 @@ class VaultIndexService {
         usedFallback: false,
       );
     } on BedrockUnconfiguredException {
-      return _bm25Query(question, topK: topK);
+      return _bm25Query(question, topK: topK, paperFilter: paperFilter);
     }
   }
 
   // ─── BM25 fallback ─────────────────────────────────────────────────────────
 
-  QueryResult _bm25Query(String question, {int topK = 5}) {
-    if (_chunks.isEmpty) {
+  QueryResult _bm25Query(
+    String question, {
+    int topK = 5,
+    List<String>? paperFilter,
+  }) {
+    // Apply paper-scope filter when provided.
+    final scopedChunks = (paperFilter != null && paperFilter.isNotEmpty)
+        ? _chunks.where((c) => paperFilter.contains(c.paperTitle)).toList()
+        : _chunks;
+
+    if (scopedChunks.isEmpty) {
       return const QueryResult(chunks: [], usedFallback: true);
     }
 
     final queryTerms = tokenize(question);
-    final scored = _chunks
+    final scored = scopedChunks
         .map((c) => _Scored(
               bm25ScoreFromTokens(
                 queryTerms,

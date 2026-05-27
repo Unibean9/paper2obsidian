@@ -39,50 +39,20 @@ class _MainScreenState extends State<MainScreen> {
   String vaultPath = '';
   File? selectedPdf;
 
-  /// Extraction state machine. Drives [ActionsPanel] button rendering.
-  /// [PaperStatus.extracting] = pipeline running; [isLoading] = save running.
   PaperStatus _paperStatus = PaperStatus.idle;
-
-  /// True only during the Save-to-Obsidian async operation (not during extraction).
   bool isLoading = false;
-
-  // NOTE: _isCancelled is NOT in Bucket A — it lives in PaperController.isCancelled (single source of truth)
   String statusText = AppMessages.get(MessageKey.statusReady);
   String fullPdfText = '';
   List<String> paperCitations = [];
   List<String> progressLogs = [];
-
-  // ── Chat history persistence (Phase 2) ──────────────────────────────────
-  /// Normalized path of the currently active library paper, used as the
-  /// key in [_chatHistory]. Null when no library paper is open.
   String? _currentPaperPath;
-
-  /// Sentinel key used in [_chatHistory] when no library paper is open.
-  /// Must not be a valid OS path (no separator, no drive letter).
   static const String _globalChatKey = '__global__';
-
-  /// Per-paper chat message threads keyed by normalized md-file path,
-  /// or [_globalChatKey] for the vault-wide chat when no paper is open.
-  /// Value type is `Map<String, dynamic>` (not String) so Phase 3 can
-  /// store a `sources` key alongside `role` and `content`.
   final Map<String, List<Map<String, dynamic>>> _chatHistory = {};
-
-  // Vault index state (Phase 6)
   bool _indexStale = false;
   bool _bannerDismissed = false;
-
-  /// Incremented each time a background vault index update completes
-  /// (indexPaper after save, or indexVault from Settings).
-  /// Passed to [ChatTab] so it can refresh [_availablePapers] automatically.
   int _indexRevision = 0;
-
-  // Holds the last extracted abstract so it survives through to saveToObsidian.
-  // Not shown in the form (read-only pipeline output).
   String _paperAbstract = '';
 
-  // =========================================================================
-  // BUCKET B — Form controllers (created and disposed by this screen)
-  // =========================================================================
   final _titleCtrl = TextEditingController();
   final _authorsCtrl = TextEditingController();
   final _venueCtrl = TextEditingController();
@@ -93,10 +63,6 @@ class _MainScreenState extends State<MainScreen> {
   final _limitationCtrl = TextEditingController();
   final _datasetCtrl = TextEditingController();
   final _summaryCtrl = TextEditingController();
-
-  // =========================================================================
-  // SERVICES AND CONTROLLER
-  // =========================================================================
   late BedrockClient _bedrockClient;
   late ResearchApiService researchApiService;
   late VaultIndexService _vaultIndexService;
@@ -174,10 +140,6 @@ class _MainScreenState extends State<MainScreen> {
     await _loadChatHistory();
   }
 
-  // ─── Chat history persistence ───────────────────────────────────────────────
-
-  /// Loads the persisted per-paper chat history from [SharedPreferences].
-  /// Called once at startup via [_loadSettings].
   Future<void> _loadChatHistory() async {
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -202,8 +164,6 @@ class _MainScreenState extends State<MainScreen> {
     }
   }
 
-  /// Serialises [_chatHistory] to JSON and writes it to [SharedPreferences].
-  /// Fire-and-forget — never throws.
   Future<void> _saveChatHistory() async {
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -217,10 +177,6 @@ class _MainScreenState extends State<MainScreen> {
     }
   }
 
-  /// Callback wired into [ChatTab.onMessagesChanged].
-  ///
-  /// Keeps [_chatHistory] in sync with every message add inside the tab,
-  /// then persists asynchronously. Always copies the list to avoid aliasing.
   void _onChatMessagesChanged(List<Map<String, dynamic>> messages) {
     final key = _currentPaperPath ?? _globalChatKey;
     _chatHistory[key] = List.from(messages);
@@ -342,10 +298,6 @@ class _MainScreenState extends State<MainScreen> {
   // PDF PROCESSING
   // =========================================================================
 
-  /// Step 1 of 2: open file picker and stage the chosen PDF.
-  ///
-  /// Sets [_paperStatus] to [PaperStatus.uploaded] and shows the PDF in the
-  /// viewer. Does NOT start extraction — the user must tap "Extract Paper".
   Future<void> _pickPdf() async {
     try {
       final result = await FilePicker.platform.pickFiles(
@@ -401,13 +353,6 @@ class _MainScreenState extends State<MainScreen> {
     }
   }
 
-  /// Step 2 of 2: run the extraction pipeline on the staged PDF.
-  ///
-  /// Called when the user taps "Extract Paper". Transitions:
-  ///   uploaded → extracting → done (or error on failure).
-  ///
-  /// **Single owner rule**: the `finally` block is the sole writer of
-  /// [_paperStatus] on the cancel path; [_handleCancel] must NOT touch it.
   Future<void> _extractPaper() async {
     if (selectedPdf == null) return;
     setState(() => _paperStatus = PaperStatus.extracting);
@@ -423,8 +368,6 @@ class _MainScreenState extends State<MainScreen> {
       _addLog(AppMessages.errorPdfExtraction(e));
       if (mounted) setState(() => _paperStatus = PaperStatus.error);
     } finally {
-      // Single owner rule: on cancel the try/catch leave _paperStatus == extracting;
-      // restore to uploaded (retry) or idle (if discarded mid-flight).
       if (mounted && _paperController.isCancelled) {
         setState(
           () => _paperStatus =
@@ -434,10 +377,6 @@ class _MainScreenState extends State<MainScreen> {
     }
   }
 
-  /// Discards the currently staged PDF and resets all state to [PaperStatus.idle].
-  ///
-  /// Only callable from [PaperStatus.uploaded] or [PaperStatus.error] — the UI
-  /// does not expose "Discard" during extraction.
   void _discardPaper() {
     setState(() {
       selectedPdf = null;
@@ -560,8 +499,6 @@ class _MainScreenState extends State<MainScreen> {
   // VAULT INDEX
   // =========================================================================
 
-  /// Checks whether the persisted paper count is less than the current
-  /// number of `.md` files in `Papers/`. Sets `_indexStale` if outdated.
   Future<void> _checkStaleness() async {
     if (vaultPath.isEmpty) return;
     try {
@@ -580,7 +517,6 @@ class _MainScreenState extends State<MainScreen> {
     }
   }
 
-  /// Triggered by the staleness banner "Rebuild" button.
   Future<void> _rebuildIndex() async {
     try {
       await _vaultIndexService.indexVault(vaultPath);
@@ -598,24 +534,11 @@ class _MainScreenState extends State<MainScreen> {
     }
   }
 
-  // =========================================================================
-  // CANCEL
-  // =========================================================================
-
-  /// Cancel handler: signals the controller to stop.
-  ///
-  /// Does NOT touch [_paperStatus] — the `finally` block in [_extractPaper]
-  /// is the single owner of cancel-path status transitions (single-owner rule).
   void _handleCancel() {
     _paperController.cancel();
     setState(() => statusText = AppMessages.get(MessageKey.statusCancelled));
   }
 
-  // =========================================================================
-  // APPLY METADATA
-  // =========================================================================
-
-  /// Applies a returned PaperMetadata to all form controllers and Bucket A variables.
   void _applyMetadata(PaperMetadata meta) {
     setState(() {
       _titleCtrl.text = meta.title;
@@ -629,17 +552,11 @@ class _MainScreenState extends State<MainScreen> {
       _limitationCtrl.text = meta.limitation;
       _summaryCtrl.text = meta.summary;
       paperCitations = meta.citations;
-      // Abstract is pipeline-only (not editable); preserve for saveToObsidian.
       _paperAbstract = meta.abstract;
-      // Apply Bucket A fields from metadata result
       if (meta.fullPdfText.isNotEmpty) fullPdfText = meta.fullPdfText;
       if (meta.resolvedPdf != null) selectedPdf = meta.resolvedPdf;
     });
   }
-
-  // =========================================================================
-  // BUILD
-  // =========================================================================
 
   @override
   Widget build(BuildContext context) {
@@ -673,9 +590,6 @@ class _MainScreenState extends State<MainScreen> {
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // ------------------------------------------
-            // COLUMN 1: ACTIONS PANEL
-            // ------------------------------------------
             SizedBox(
               width: 260,
               child: ActionsPanel(
@@ -695,10 +609,6 @@ class _MainScreenState extends State<MainScreen> {
             ),
 
             const SizedBox(width: 20),
-
-            // ------------------------------------------
-            // COLUMN 2: PDF PREVIEW WITH ZOOM & TEXT INTERACTION TOOLBAR
-            // ------------------------------------------
             Expanded(
               flex: 5,
               child: PdfViewerPanel(
@@ -708,10 +618,6 @@ class _MainScreenState extends State<MainScreen> {
             ),
 
             const SizedBox(width: 20),
-
-            // ------------------------------------------
-            // COLUMN 3: 4-TAB MANAGEMENT PANEL (METADATA, CHAT, CITATIONS, LIBRARY)
-            // ------------------------------------------
             Expanded(
               flex: 4,
               child: PanelContainer(
@@ -752,7 +658,6 @@ class _MainScreenState extends State<MainScreen> {
                       Expanded(
                         child: TabBarView(
                           children: [
-                            // TAB 1: METADATA FORM
                             MetadataTab(
                               titleCtrl: _titleCtrl,
                               authorsCtrl: _authorsCtrl,
@@ -765,11 +670,6 @@ class _MainScreenState extends State<MainScreen> {
                               limitationCtrl: _limitationCtrl,
                               summaryCtrl: _summaryCtrl,
                             ),
-
-                            // TAB 2: VAULT RAG CHAT
-                            // ValueKey(_currentPaperPath) ensures Flutter
-                            // invalidates State on every paper switch, so
-                            // initState re-seeds from initialMessages.
                             ChatTab(
                               key: ValueKey(_currentPaperPath),
                               vaultIndexService: _vaultIndexService,
@@ -791,14 +691,10 @@ class _MainScreenState extends State<MainScreen> {
                               // paper's bibliography, not AI RAG results.
                               indexRevision: _indexRevision,
                             ),
-
-                            // TAB 3: CITATIONS SCREEN
                             CitationsTab(
                               citations: paperCitations,
                               primaryColor: primaryColor,
                             ),
-
-                            // TAB 4: VAULT LIBRARY
                             LibraryTab(
                               key: _libraryTabKey,
                               vaultPath: vaultPath,

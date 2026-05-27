@@ -5,13 +5,6 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../services/bedrock_client.dart';
 import '../services/vault_index_service.dart';
 
-/// Tab 2 — Vault-wide RAG chat.
-///
-/// Owns its own message list and all chat state internally.
-/// Queries [VaultIndexService] for top-k relevant chunks, builds an attributed
-/// system prompt, and calls [BedrockClient.converse] for a synthesised answer.
-/// Falls back to BM25 keyword search when AWS credentials are absent and
-/// prepends a visible notice to the response.
 class ChatTab extends StatefulWidget {
   const ChatTab({
     super.key,
@@ -31,31 +24,12 @@ class ChatTab extends StatefulWidget {
   final BedrockClient bedrockClient;
   final Color primaryColor;
 
-  /// When true, a staleness warning banner is rendered at the top of the chat area.
   final bool showStaleBanner;
-
-  /// Called when the user taps "Rebuild" in the staleness banner.
   final Future<void> Function()? onRebuildIndex;
-
-  /// Called when the user taps "✕" to dismiss the staleness banner.
   final VoidCallback? onDismissBanner;
-
-  /// Seed messages to display on mount (restored from per-paper history).
-  /// The parent copies the list before passing — no aliasing risk.
   final List<Map<String, dynamic>> initialMessages;
-
-  /// Fired whenever the message list changes (user send or assistant reply).
-  /// The parent uses this to keep [_chatHistory] in sync for persistence.
   final void Function(List<Map<String, dynamic>> messages)? onMessagesChanged;
-
-  /// Fired after each successful RAG response with the formatted citation list.
-  /// Parent screen uses this to keep the Extracted Citations panel in sync.
-  /// Each entry is formatted as "[N] PaperTitle — Section".
   final void Function(List<String> citations)? onCitationsUpdated;
-
-  /// Incremented by the parent whenever a background vault index update
-  /// completes (e.g. after saving a new paper). [_ChatTabState] watches this
-  /// in [didUpdateWidget] and refreshes [_availablePapers] automatically.
   final int indexRevision;
 
   @override
@@ -70,21 +44,12 @@ class _ChatTabState extends State<ChatTab> with AutomaticKeepAliveClientMixin {
   final ScrollController _scrollCtrl = ScrollController();
   final TextEditingController _inputCtrl = TextEditingController();
 
-  /// Message type is `Map<String, dynamic>` so the `sources` key can be stored
-  /// alongside `role` and `content` without breaking the history cache.
   late List<Map<String, dynamic>> _messages;
   bool _isLoading = false;
   bool _isRebuilding = false;
 
-  // ── Paper scope selector (Phase 3) ────────────────────────────────────────
-  /// Papers selected for scoped RAG queries. Empty = all papers (default).
   List<String> _selectedPapers = [];
-
-  /// Available paper titles for the scope selector bottom sheet.
   List<String> _availablePapers = [];
-
-  // ── Output language toggle (Phase 4) ─────────────────────────────────────
-  /// Output language: 'en' = English (default), 'vi' = Vietnamese.
   String _outputLanguage = 'en';
 
   @override
@@ -106,8 +71,6 @@ class _ChatTabState extends State<ChatTab> with AutomaticKeepAliveClientMixin {
   @override
   void didUpdateWidget(covariant ChatTab oldWidget) {
     super.didUpdateWidget(oldWidget);
-    // When the parent signals that a background vault index update completed,
-    // refresh the available-papers list so the scope selector shows the new paper.
     if (widget.indexRevision != oldWidget.indexRevision) {
       setState(() {
         _availablePapers = widget.vaultIndexService.getIndexedPaperTitles();
@@ -122,8 +85,6 @@ class _ChatTabState extends State<ChatTab> with AutomaticKeepAliveClientMixin {
     super.dispose();
   }
 
-  // ─── Scroll ────────────────────────────────────────────────────────────────
-
   void _scrollToBottom() {
     Future.delayed(const Duration(milliseconds: 100), () {
       if (!mounted || !_scrollCtrl.hasClients) return;
@@ -134,8 +95,6 @@ class _ChatTabState extends State<ChatTab> with AutomaticKeepAliveClientMixin {
       );
     });
   }
-
-  // ─── Send message ──────────────────────────────────────────────────────────
 
   Future<void> _handleSend() async {
     final text = _inputCtrl.text.trim();
@@ -172,8 +131,6 @@ class _ChatTabState extends State<ChatTab> with AutomaticKeepAliveClientMixin {
           .where((c) => seen.add('${c.paperTitle}::${c.section}'))
           .toList();
 
-      // Build numbered attribution context — include full chunk text so the
-      // model has depth to answer without needing a trailing Sources list.
       final contextBuf = StringBuffer();
       for (int i = 0; i < chunks.length; i++) {
         contextBuf
@@ -189,7 +146,6 @@ class _ChatTabState extends State<ChatTab> with AutomaticKeepAliveClientMixin {
         (i) => '[${i + 1}]',
       ).join(', ');
 
-      // Append Vietnamese output instruction when selected.
       final langInstruction = _outputLanguage == 'vi'
           ? '\nRespond entirely in Vietnamese.'
           : '';
@@ -206,12 +162,10 @@ class _ChatTabState extends State<ChatTab> with AutomaticKeepAliveClientMixin {
           'say "I don\'t have information on that."\n'
           '\nSOURCES:\n${contextBuf.toString()}';
 
-      // 0-based: sources[0] → [1], sources[1] → [2], etc.
       final List<Map<String, String>> sourcesList = chunks
           .map((c) => {'title': c.paperTitle, 'section': c.section})
           .toList();
 
-      // Sync Extracted Citations panel before the AI responds.
       final citationStrings = chunks
           .asMap()
           .entries
@@ -228,7 +182,6 @@ class _ChatTabState extends State<ChatTab> with AutomaticKeepAliveClientMixin {
           userMessage: text,
         );
       } on BedrockUnconfiguredException {
-        // AWS not configured — surface the retrieved context as a plain list.
         final buf = StringBuffer(
           '⚠️ AWS Bedrock is not configured — cannot synthesise an answer.\n\n'
           'Relevant sources found in vault:\n\n',
@@ -245,11 +198,9 @@ class _ChatTabState extends State<ChatTab> with AutomaticKeepAliveClientMixin {
         return;
       }
 
-      // Strip any trailing Sources block the model may still emit defensively.
       final sourcesRe = RegExp(r'\n*Sources:.*$', dotAll: true);
       response = response.replaceFirst(sourcesRe, '').trimRight();
 
-      // Prepend BM25 fallback notice when semantic search was unavailable.
       if (result.usedFallback) {
         response =
             '⚠️ Semantic search unavailable — keyword search used. '
@@ -265,11 +216,6 @@ class _ChatTabState extends State<ChatTab> with AutomaticKeepAliveClientMixin {
     }
   }
 
-  /// Adds an assistant message to [_messages] and notifies the parent.
-  ///
-  /// [sources] is an optional list of `{'title': ..., 'section': ...}` maps
-  /// stored alongside the message for Phase 3 clickable citations. When null,
-  /// no `sources` key is stored (user/error messages have no citations).
   void _addAssistantMessage(
     String content, {
     List<Map<String, String>>? sources,
@@ -281,10 +227,7 @@ class _ChatTabState extends State<ChatTab> with AutomaticKeepAliveClientMixin {
     widget.onMessagesChanged?.call(List.from(_messages));
   }
 
-  // ─── Paper scope selector ─────────────────────────────────────────────────
-
   void _showScopeSheet() {
-    // Refresh the list when the sheet opens (index may have updated).
     setState(() {
       _availablePapers = widget.vaultIndexService.getIndexedPaperTitles();
     });
@@ -305,8 +248,6 @@ class _ChatTabState extends State<ChatTab> with AutomaticKeepAliveClientMixin {
       ),
     );
   }
-
-  // ─── Clear chat ────────────────────────────────────────────────────────────
 
   void _clearChat() {
     if (_messages.isEmpty) return;
@@ -336,16 +277,12 @@ class _ChatTabState extends State<ChatTab> with AutomaticKeepAliveClientMixin {
     });
   }
 
-  // ─── Language toggle ───────────────────────────────────────────────────────
-
   void _setOutputLanguage(String lang) {
     setState(() => _outputLanguage = lang);
     SharedPreferences.getInstance().then(
       (prefs) => prefs.setString('chat_output_language', lang),
     );
   }
-
-  // ─── Rebuild banner action ─────────────────────────────────────────────────
 
   Future<void> _handleRebuild() async {
     setState(() => _isRebuilding = true);
@@ -356,7 +293,10 @@ class _ChatTabState extends State<ChatTab> with AutomaticKeepAliveClientMixin {
     }
   }
 
-  // ─── Build ─────────────────────────────────────────────────────────────────
+  void _handleSuggestion(String suggestion) {
+    _inputCtrl.text = suggestion;
+    _handleSend();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -371,7 +311,6 @@ class _ChatTabState extends State<ChatTab> with AutomaticKeepAliveClientMixin {
             primaryColor: widget.primaryColor,
           ),
 
-        // Message list
         Expanded(
           child: ListView.builder(
             controller: _scrollCtrl,
@@ -387,8 +326,6 @@ class _ChatTabState extends State<ChatTab> with AutomaticKeepAliveClientMixin {
                       .toList() ??
                   const [];
               return Align(
-                // ValueKey prevents Flutter from swapping recognizer State
-                // between messages when the list scrolls out of view.
                 key: ValueKey(index),
                 alignment: isUser
                     ? Alignment.centerRight
@@ -433,7 +370,6 @@ class _ChatTabState extends State<ChatTab> with AutomaticKeepAliveClientMixin {
           ),
         ),
 
-        // Thinking indicator
         if (_isLoading)
           Padding(
             padding: const EdgeInsets.all(8.0),
@@ -458,37 +394,35 @@ class _ChatTabState extends State<ChatTab> with AutomaticKeepAliveClientMixin {
 
         const Divider(height: 1),
 
-        // Quick suggestions
-        // Padding(
-        //   padding: const EdgeInsets.only(left: 12, right: 12, top: 12),
-        //   child: SingleChildScrollView(
-        //     scrollDirection: Axis.horizontal,
-        //     child: Wrap(
-        //       spacing: 8,
-        //       children:
-        //           [
-        //                 'What are the key findings?',
-        //                 'Compare research methodologies',
-        //                 'What limitations are discussed?',
-        //               ]
-        //               .map(
-        //                 (s) => ActionChip(
-        //                   label: Text(s, style: const TextStyle(fontSize: 12)),
-        //                   backgroundColor: widget.primaryColor.withValues(
-        //                     alpha: 0.05,
-        //                   ),
-        //                   side: BorderSide(
-        //                     color: widget.primaryColor.withValues(alpha: 0.2),
-        //                   ),
-        //                   onPressed: () => _handleSuggestion(s),
-        //                 ),
-        //               )
-        //               .toList(),
-        //     ),
-        //   ),
-        // ),
+        Padding(
+          padding: const EdgeInsets.only(left: 12, right: 12, top: 12),
+          child: SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Wrap(
+              spacing: 8,
+              children:
+                  [
+                        'What are the key findings?',
+                        'Compare research methodologies',
+                        'What limitations are discussed?',
+                      ]
+                      .map(
+                        (s) => ActionChip(
+                          label: Text(s, style: const TextStyle(fontSize: 12)),
+                          backgroundColor: widget.primaryColor.withValues(
+                            alpha: 0.05,
+                          ),
+                          side: BorderSide(
+                            color: widget.primaryColor.withValues(alpha: 0.2),
+                          ),
+                          onPressed: () => _handleSuggestion(s),
+                        ),
+                      )
+                      .toList(),
+            ),
+          ),
+        ),
 
-        // Toolbar: scope selector + language toggle
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
           child: Row(
@@ -530,7 +464,7 @@ class _ChatTabState extends State<ChatTab> with AutomaticKeepAliveClientMixin {
                   textStyle: const TextStyle(fontSize: 12),
                 ),
               ),
-              const Spacer(), // Clear chat button
+              const Spacer(),
               if (_messages.isNotEmpty)
                 IconButton(
                   icon: Icon(
@@ -548,7 +482,6 @@ class _ChatTabState extends State<ChatTab> with AutomaticKeepAliveClientMixin {
           ),
         ),
 
-        // Input row
         Padding(
           padding: const EdgeInsets.all(12.0),
           child: Row(
@@ -590,16 +523,6 @@ class _ChatTabState extends State<ChatTab> with AutomaticKeepAliveClientMixin {
   }
 }
 
-// ─── Assistant message bubble with clickable [N] citations ────────────────
-
-/// Renders an assistant message as [RichText] with tappable `[N]` citation
-/// markers. Each tap opens an [AlertDialog] showing the referenced paper title
-/// and section from the companion [sources] list.
-///
-/// Owns a [List<TapGestureRecognizer>] that is fully disposed in [dispose],
-/// preventing Flutter framework "pending gesture" debug errors.
-/// Each instance in [ListView.builder] carries a [ValueKey] so Flutter's
-/// element reconciliation never swaps recognizer state between messages.
 class _AssistantMessageWidget extends StatefulWidget {
   const _AssistantMessageWidget({
     required super.key,
@@ -609,8 +532,6 @@ class _AssistantMessageWidget extends StatefulWidget {
   });
 
   final String content;
-
-  /// Parallel list to the `[1]`, `[2]` … markers: `sources[0]` → `[1]`.
   final List<Map<String, String>> sources;
   final Color primaryColor;
 
@@ -652,16 +573,12 @@ class _AssistantMessageWidgetState extends State<_AssistantMessageWidget> {
     _recognizers.clear();
   }
 
-  /// Splits [widget.content] into alternating plain-text and `[N]` spans.
-  /// Creates one [TapGestureRecognizer] per citation token; stores them in
-  /// [_recognizers] so they can be disposed correctly.
   List<TextSpan> _buildSpans() {
     final spans = <TextSpan>[];
     final pattern = RegExp(r'\[(\d+)\]');
     var lastEnd = 0;
 
     for (final match in pattern.allMatches(widget.content)) {
-      // Plain text segment before this citation token.
       if (match.start > lastEnd) {
         spans.add(
           TextSpan(
@@ -691,7 +608,6 @@ class _AssistantMessageWidgetState extends State<_AssistantMessageWidget> {
       lastEnd = match.end;
     }
 
-    // Remaining plain text after the last citation token.
     if (lastEnd < widget.content.length) {
       spans.add(
         TextSpan(
@@ -706,7 +622,7 @@ class _AssistantMessageWidgetState extends State<_AssistantMessageWidget> {
 
   void _showSourceDialog(int n) {
     if (!mounted) return;
-    final idx = n - 1; // sources is 0-indexed; [1] → index 0
+    final idx = n - 1;
     final source = (idx >= 0 && idx < widget.sources.length)
         ? widget.sources[idx]
         : null;
@@ -751,11 +667,6 @@ class _AssistantMessageWidgetState extends State<_AssistantMessageWidget> {
   }
 }
 
-// ─── Paper scope selector bottom sheet ────────────────────────────────────
-
-/// Bottom sheet that lets the user pick which indexed vault papers to
-/// restrict the RAG query to. Closing without applying preserves the prior
-/// selection. Tapping "Apply" calls [onChanged] with the new selection list.
 class _PaperScopeSheet extends StatefulWidget {
   const _PaperScopeSheet({
     required this.availablePapers,
@@ -788,7 +699,6 @@ class _PaperScopeSheetState extends State<_PaperScopeSheet> {
       expand: false,
       builder: (ctx, scrollCtrl) => Column(
         children: [
-          // Handle
           Container(
             margin: const EdgeInsets.only(top: 12, bottom: 4),
             width: 36,
@@ -859,8 +769,6 @@ class _PaperScopeSheetState extends State<_PaperScopeSheet> {
     );
   }
 }
-
-// ─── Staleness banner ──────────────────────────────────────────────────────
 
 class _StaleBanner extends StatelessWidget {
   const _StaleBanner({

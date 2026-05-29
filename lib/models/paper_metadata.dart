@@ -25,6 +25,7 @@ class PaperMetadata {
     this.citations = const [],
     this.fullPdfText = '',
     this.resolvedPdf,
+    this.zoteroItemKey,
   });
 
   factory PaperMetadata.empty() => const PaperMetadata();
@@ -47,6 +48,9 @@ class PaperMetadata {
   final String fullPdfText;
 
   final File? resolvedPdf;
+
+  /// Non-null when this paper was imported from Zotero. Prevents re-export.
+  final String? zoteroItemKey;
 
   String get dedupKey {
     final d = doi.trim();
@@ -72,6 +76,7 @@ class PaperMetadata {
     'full_pdf_text': fullPdfText,
     'resolved_pdf_path': resolvedPdf?.path,
     'dedup_key': dedupKey,
+    'zotero_item_key': zoteroItemKey,
   };
 
   factory PaperMetadata.fromMap(Map<String, Object?> map) {
@@ -107,6 +112,7 @@ class PaperMetadata {
       citations: citations,
       fullPdfText: (map['full_pdf_text'] as String?) ?? '',
       resolvedPdf: resolvedPdf,
+      zoteroItemKey: map['zotero_item_key'] as String?,
     );
   }
 
@@ -125,6 +131,7 @@ class PaperMetadata {
     List<String>? citations,
     String? fullPdfText,
     File? resolvedPdf,
+    Object? zoteroItemKey = _sentinel,
   }) => PaperMetadata(
     title: title ?? this.title,
     authors: authors ?? this.authors,
@@ -140,5 +147,10 @@ class PaperMetadata {
     citations: citations ?? this.citations,
     fullPdfText: fullPdfText ?? this.fullPdfText,
     resolvedPdf: resolvedPdf ?? this.resolvedPdf,
+    zoteroItemKey: zoteroItemKey == _sentinel
+        ? this.zoteroItemKey
+        : zoteroItemKey as String?,
   );
 }
+
+const Object _sentinel = Object();

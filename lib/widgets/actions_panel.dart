@@ -24,6 +24,7 @@ class ActionsPanel extends StatefulWidget {
     this.activeCollectionKey,
     this.onImportFromZotero,
     this.onExportFromZotero,
+    this.isFromZotero = false,
   });
 
   final PaperStatus paperStatus;
@@ -44,6 +45,7 @@ class ActionsPanel extends StatefulWidget {
   final String? activeCollectionKey;
   final VoidCallback? onImportFromZotero;
   final VoidCallback? onExportFromZotero;
+  final bool isFromZotero;
 
   @override
   State<ActionsPanel> createState() => _ActionsPanelState();
@@ -282,11 +284,14 @@ class _ActionsPanelState extends State<ActionsPanel> {
             _ZoteroActionButton(
               icon: Icons.cloud_upload_outlined,
               label: 'Export to Zotero',
-              tooltip: widget.activeCollectionKey == null
-                  ? 'Set a Zotero collection key for this project first'
-                  : (!isDone ? 'Extract a paper first' : null),
+              tooltip: widget.isFromZotero
+                  ? 'This paper was imported from Zotero — export disabled'
+                  : widget.activeCollectionKey == null
+                      ? 'Set a Zotero collection key for this project first'
+                      : (!isDone ? 'Extract a paper first' : null),
               enabled: isDone &&
                   !isBusy &&
+                  !widget.isFromZotero &&
                   widget.activeCollectionKey != null,
               onTap: widget.onExportFromZotero,
             ),

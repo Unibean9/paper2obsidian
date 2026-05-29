@@ -28,7 +28,7 @@ class DatabaseService {
     _db = await databaseFactoryFfi.openDatabase(
       p.join(dir.path, 'paper2obsidian.db'),
       options: OpenDatabaseOptions(
-        version: 1,
+        version: 2,
         onCreate: _onCreate,
         onUpgrade: _onUpgrade,
       ),
@@ -56,11 +56,16 @@ class DatabaseService {
         citations         TEXT NOT NULL DEFAULT '[]',
         full_pdf_text     TEXT NOT NULL DEFAULT '',
         resolved_pdf_path TEXT NULL,
-        dedup_key         TEXT NOT NULL UNIQUE
+        dedup_key         TEXT NOT NULL UNIQUE,
+        zotero_item_key   TEXT NULL
       )
     ''');
   }
 
-  // schema version 1 — implement real migration before any schema change
-  Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {}
+  Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
+    if (oldVersion < 2) {
+      await db.execute(
+          'ALTER TABLE papers ADD COLUMN zotero_item_key TEXT NULL');
+    }
+  }
 }

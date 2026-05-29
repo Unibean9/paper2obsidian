@@ -160,12 +160,40 @@ class ZoteroService {
 
   Future<List<ZoteroItem>> listCollectionItems(String collectionKey) async {
     final uri = Uri.parse(
-        '$_baseUrl/users/$_userId/collections/$collectionKey/items?limit=100&start=0&itemType=attachment,-attachment');
+        '$_baseUrl/users/$_userId/collections/$collectionKey/items/top?limit=100&start=0');
     final response = await _request('GET', uri);
     final list = jsonDecode(response.body) as List;
     return list
         .map((e) => ZoteroItem.fromJson(e as Map<String, dynamic>))
         .toList();
+  }
+
+  /// Fetches children of a parent item and returns the key of the first PDF attachment.
+  /// Returns null if no PDF attachment is found.
+  Future<String?> findPdfAttachmentKey(String parentKey) async {
+    final uri = Uri.parse('$_baseUrl/users/$_userId/items/$parentKey/children');
+    late http.Response response;
+    try {
+      response = await _client
+          .get(uri, headers: _headers)
+          .timeout(const Duration(seconds: 30));
+    } catch (e) {
+      throw ZoteroException(
+        userMessage: 'Network error fetching item children: $e',
+        technicalError: e,
+      );
+    }
+    if (response.statusCode != 200) _assertOk(response);
+
+    final list = jsonDecode(response.body) as List;
+    for (final item in list) {
+      final data = (item['data'] as Map<String, dynamic>?) ?? {};
+      if (data['itemType'] == 'attachment' &&
+          (data['contentType'] as String? ?? '').contains('pdf')) {
+        return item['key'] as String? ?? data['key'] as String?;
+      }
+    }
+    return null;
   }
 
   // =========================================================================

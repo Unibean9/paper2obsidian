@@ -55,4 +55,26 @@ class PaperRepository {
   Future<void> deletePaper(String dedupKey) async {
     await _db.delete('papers', where: 'dedup_key = ?', whereArgs: [dedupKey]);
   }
+
+  Future<PaperMetadata?> findByZoteroKey(String zoteroItemKey) async {
+    final rows = await _db.query(
+      'papers',
+      where: 'zotero_item_key = ?',
+      whereArgs: [zoteroItemKey],
+      limit: 1,
+    );
+    return rows.isEmpty ? null : PaperMetadata.fromMap(rows.first);
+  }
+
+  /// Returns a Set of all Zotero item keys that have been imported locally.
+  Future<Set<String>> getAllImportedZoteroKeys() async {
+    final rows = await _db.query(
+      'papers',
+      columns: ['zotero_item_key'],
+      where: 'zotero_item_key IS NOT NULL',
+    );
+    return rows
+        .map((r) => r['zotero_item_key'] as String)
+        .toSet();
+  }
 }

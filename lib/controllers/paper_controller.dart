@@ -783,9 +783,28 @@ ${meta.summary}
     return service.listCollectionItems(collectionKey);
   }
 
+  /// Returns Zotero collection items enriched with local import status.
+  /// Each record: `(item: ZoteroItem, isLocal: bool)`.
+  Future<List<({ZoteroItem item, bool isLocal})>> loadZoteroCollectionWithStatus(
+      String collectionKey) async {
+    final service = await _getZoteroService();
+    final items = await service.listCollectionItems(collectionKey);
+
+    Set<String> importedKeys = {};
+    if (paperRepository != null) {
+      try {
+        importedKeys = await paperRepository!.getAllImportedZoteroKeys();
+      } catch (_) {}
+    }
+
+    return items
+        .map((item) => (item: item, isLocal: importedKeys.contains(item.key)))
+        .toList();
+  }
+
   /// Downloads the PDF for [item] into a temp file inside the vault's
   /// `.paper2obsidian/` directory, processes it through the existing pipeline,
-  /// and returns the extracted [PaperMetadata].
+  /// and returns the extracted [PaperMetadata] with [zoteroItemKey] set.
   Future<PaperMetadata> importFromZotero({
     required String vaultPath,
     required ZoteroItem item,
@@ -793,37 +812,41 @@ ${meta.summary}
   }) async {
     final service = await _getZoteroService();
 
-    // Find the attachment key — list children of the parent item.
-    onLog('Fetching PDF for "${item.title}"…');
-    final targetKey = item.key;
+    onLog('Fetching PDF attachment for "${item.title}"…');
+    // Parent items (journalArticle etc.) don't have a direct /file endpoint.
+    // We must first find the child PDF attachment key, then download that.
+    final attachmentKey = await service.findPdfAttachmentKey(item.key);
+    if (attachmentKey == null) {
+      throw UserFacingException(
+        userMessage:
+            'No PDF attachment found for "${item.title}". '
+            'Make sure the item has an attached PDF in Zotero.',
+      );
+    }
 
     onLog('Downloading PDF from Zotero…');
     Uint8List pdfBytes;
     try {
-      pdfBytes = await service.downloadPdf(targetKey);
-    } catch (_) {
-      // If direct download fails (e.g. item is a parent, not attachment),
-      // surface a clear error rather than silently failing.
+      pdfBytes = await service.downloadPdf(attachmentKey);
+    } catch (e) {
       throw UserFacingException(
         userMessage:
-            'Could not download PDF for "${item.title}". '
-            'Make sure the item has an attached PDF in Zotero.',
+            'Could not download PDF for "${item.title}": $e',
       );
     }
 
     // Write to temp file for processing.
     final tempDir = Directory(p.join(vaultPath, '.paper2obsidian'));
     if (!tempDir.existsSync()) tempDir.createSync(recursive: true);
-    final tempPath =
-        p.join(tempDir.path, 'zotero_import_${item.key}.pdf');
+    final tempPath = p.join(tempDir.path, 'zotero_import_${item.key}.pdf');
     final tempFile = File(tempPath);
     try {
       await tempFile.writeAsBytes(pdfBytes);
       onLog('Processing downloaded PDF…');
       final meta = await processPdf(tempFile);
-      return meta;
+      // Tag with Zotero key so the paper cannot be re-exported back.
+      return meta.copyWith(zoteroItemKey: item.key);
     } catch (e) {
-      // Immediate cleanup on any processing error.
       if (tempFile.existsSync()) {
         try {
           await tempFile.delete();
@@ -832,7 +855,7 @@ ${meta.summary}
       rethrow;
     }
     // Note: tempFile is left on disk so the caller can use it as `selectedPdf`.
-    // The caller is responsible for cleanup or the startup scan handles orphans.
+    // The startup scan (cleanupZoteroTempFiles) handles orphans.
   }
 
   /// Uploads a processed paper's PDF + metadata back to a Zotero collection.

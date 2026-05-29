@@ -47,6 +47,7 @@ class _MainScreenState extends State<MainScreen> {
   Project? _activeProject;
   bool _isSwitching = false;
   bool _isZoteroConfigured = false;
+  bool _isFromZotero = false;
 
   String get vaultPath => _activeProject?.vaultPath ?? '';
   String? get _activeCollectionKey => _activeProject?.zoteroCollectionKey;
@@ -697,6 +698,28 @@ class _MainScreenState extends State<MainScreen> {
     }
   }
 
+  /// Directly imports a Zotero item from the library tab (no picker dialog).
+  Future<void> _importZoteroItem(dynamic item) async {
+    if (isLoading) return;
+    setState(() => isLoading = true);
+    try {
+      final meta = await _paperController.importFromZotero(
+        vaultPath: vaultPath,
+        item: item,
+        collectionKey: _activeCollectionKey ?? '',
+      );
+      if (mounted) {
+        _applyMetadata(meta);
+        setState(() => _paperStatus = PaperStatus.done);
+      }
+    } catch (e) {
+      _addLog('❌ Zotero import failed: $e');
+      if (mounted) setState(() => _paperStatus = PaperStatus.error);
+    } finally {
+      if (mounted) setState(() => isLoading = false);
+    }
+  }
+
   Future<void> _exportToZotero() async {
     final collectionKey = _activeCollectionKey;
     if (collectionKey == null || collectionKey.isEmpty) return;
@@ -747,6 +770,7 @@ class _MainScreenState extends State<MainScreen> {
       _summaryCtrl.text = meta.summary;
       paperCitations = meta.citations;
       _paperAbstract = meta.abstract;
+      _isFromZotero = meta.zoteroItemKey != null;
       if (meta.fullPdfText.isNotEmpty) fullPdfText = meta.fullPdfText;
       if (meta.resolvedPdf != null) selectedPdf = meta.resolvedPdf;
     });
@@ -821,6 +845,7 @@ class _MainScreenState extends State<MainScreen> {
                 activeCollectionKey: _activeCollectionKey,
                 onImportFromZotero: _importFromZotero,
                 onExportFromZotero: _exportToZotero,
+                isFromZotero: _isFromZotero,
               ),
             ),
 
@@ -915,6 +940,13 @@ class _MainScreenState extends State<MainScreen> {
                               onOpenPaper: _openPaperFromLibrary,
                               loadLibrary: _loadLibrary,
                               primaryColor: primaryColor,
+                              isZoteroConfigured: _isZoteroConfigured,
+                              activeCollectionKey: _activeCollectionKey,
+                              loadZoteroCollection: _activeCollectionKey != null
+                                  ? _paperController
+                                      .loadZoteroCollectionWithStatus
+                                  : null,
+                              onImportZoteroItem: _importZoteroItem,
                             ),
                           ],
                         ),

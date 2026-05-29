@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../constants/messages.dart';
+import '../models/zotero_item.dart';
 
 class LibraryTab extends StatefulWidget {
   const LibraryTab({
@@ -9,61 +10,200 @@ class LibraryTab extends StatefulWidget {
     required this.onOpenPaper,
     required this.loadLibrary,
     required this.primaryColor,
+    this.isZoteroConfigured = false,
+    this.activeCollectionKey,
+    this.loadZoteroCollection,
+    this.onImportZoteroItem,
   });
 
   final String vaultPath;
-
   final Future<void> Function(String mdPath) onOpenPaper;
-
   final Future<List<Map<String, String>>> Function() loadLibrary;
-
   final Color primaryColor;
+
+  final bool isZoteroConfigured;
+  final String? activeCollectionKey;
+
+  /// Returns list of (item, isLocal) pairs from the Zotero collection.
+  final Future<List<({ZoteroItem item, bool isLocal})>> Function(
+      String collectionKey)? loadZoteroCollection;
+
+  /// Called when user taps Import on a Zotero item.
+  final Future<void> Function(ZoteroItem item)? onImportZoteroItem;
 
   @override
   State<LibraryTab> createState() => LibraryTabState();
 }
 
-class LibraryTabState extends State<LibraryTab> {
-  List<Map<String, String>> _papers = [];
-  bool _isLoading = false;
+class LibraryTabState extends State<LibraryTab>
+    with SingleTickerProviderStateMixin {
+  late TabController _tabController;
+
+  // Local tab state
+  List<Map<String, String>> _localPapers = [];
+  bool _isLoadingLocal = false;
+
+  // Zotero tab state
+  List<({ZoteroItem item, bool isLocal})> _zoteroItems = [];
+  bool _isLoadingZotero = false;
+  String? _zoteroError;
+  String _searchQuery = '';
+  String? _importingKey; // key of item currently being imported
 
   @override
   void initState() {
     super.initState();
-    _refresh();
+    final showZotero = _shouldShowZoteroTab;
+    _tabController = TabController(
+      length: showZotero ? 2 : 1,
+      vsync: this,
+    );
+    _refreshLocal();
+    if (showZotero) _refreshZotero();
   }
 
   @override
   void didUpdateWidget(covariant LibraryTab oldWidget) {
     super.didUpdateWidget(oldWidget);
-    // Reload when vaultPath changes.
-    if (widget.vaultPath != oldWidget.vaultPath) {
-      _refresh();
-    }
-  }
+    final wasZotero = _shouldShowZoteroTab;
+    final nowZotero = widget.isZoteroConfigured &&
+        widget.activeCollectionKey != null &&
+        widget.activeCollectionKey!.isNotEmpty;
 
-  void refresh() => _refresh();
+    if (widget.vaultPath != oldWidget.vaultPath) _refreshLocal();
 
-  Future<void> _refresh() async {
-    if (!mounted) return;
-    setState(() => _isLoading = true);
-    try {
-      final List<Map<String, String>> papers = await widget.loadLibrary();
-      if (mounted) setState(() => _papers = papers);
-    } finally {
-      if (mounted) setState(() => _isLoading = false);
+    if (widget.activeCollectionKey != oldWidget.activeCollectionKey ||
+        widget.isZoteroConfigured != oldWidget.isZoteroConfigured) {
+      // Rebuild tab controller if Zotero availability changed
+      if (wasZotero != nowZotero) {
+        _tabController.dispose();
+        _tabController = TabController(
+          length: nowZotero ? 2 : 1,
+          vsync: this,
+        );
+      }
+      if (nowZotero) _refreshZotero();
     }
   }
 
   @override
+  void dispose() {
+    _tabController.dispose();
+    super.dispose();
+  }
+
+  bool get _shouldShowZoteroTab =>
+      widget.isZoteroConfigured &&
+      widget.activeCollectionKey != null &&
+      widget.activeCollectionKey!.isNotEmpty;
+
+  void refresh() {
+    _refreshLocal();
+    if (_shouldShowZoteroTab) _refreshZotero();
+  }
+
+  Future<void> _refreshLocal() async {
+    if (!mounted) return;
+    setState(() => _isLoadingLocal = true);
+    try {
+      final papers = await widget.loadLibrary();
+      if (mounted) setState(() => _localPapers = papers);
+    } finally {
+      if (mounted) setState(() => _isLoadingLocal = false);
+    }
+  }
+
+  Future<void> _refreshZotero() async {
+    if (!mounted) return;
+    final collectionKey = widget.activeCollectionKey;
+    if (collectionKey == null || widget.loadZoteroCollection == null) return;
+    setState(() {
+      _isLoadingZotero = true;
+      _zoteroError = null;
+    });
+    try {
+      final items = await widget.loadZoteroCollection!(collectionKey);
+      if (mounted) setState(() => _zoteroItems = items);
+    } catch (e) {
+      if (mounted) setState(() => _zoteroError = e.toString());
+    } finally {
+      if (mounted) setState(() => _isLoadingZotero = false);
+    }
+  }
+
+  Future<void> _importItem(ZoteroItem item) async {
+    if (widget.onImportZoteroItem == null) return;
+    setState(() => _importingKey = item.key);
+    try {
+      await widget.onImportZoteroItem!(item);
+      // Mark as local and refresh local list after import
+      if (mounted) {
+        setState(() {
+          _zoteroItems = _zoteroItems
+              .map((r) => r.item.key == item.key
+                  ? (item: r.item, isLocal: true)
+                  : r)
+              .toList();
+        });
+        _refreshLocal();
+      }
+    } catch (_) {
+      // Errors are surfaced by MainScreen's _addLog; no extra handling needed here.
+    } finally {
+      if (mounted) setState(() => _importingKey = null);
+    }
+  }
+
+  // =========================================================================
+  // Build
+  // =========================================================================
+
+  @override
   Widget build(BuildContext context) {
-    if (_isLoading) {
-      return Center(
-        child: CircularProgressIndicator(color: widget.primaryColor),
-      );
+    final showZotero = _shouldShowZoteroTab;
+
+    if (!showZotero) {
+      return _buildLocalTab();
     }
 
-    if (_papers.isEmpty) {
+    return Column(
+      children: [
+        TabBar(
+          controller: _tabController,
+          indicatorColor: widget.primaryColor,
+          labelColor: widget.primaryColor,
+          unselectedLabelColor: Colors.grey.shade600,
+          tabs: [
+            Tab(text: 'Local (${_localPapers.length})'),
+            Tab(
+              text: _isLoadingZotero
+                  ? 'Zotero …'
+                  : 'Zotero (${_zoteroItems.length})',
+            ),
+          ],
+        ),
+        const Divider(height: 1),
+        Expanded(
+          child: TabBarView(
+            controller: _tabController,
+            children: [
+              _buildLocalTab(),
+              _buildZoteroTab(),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  // ─── Local tab ─────────────────────────────────────────────────────────────
+
+  Widget _buildLocalTab() {
+    if (_isLoadingLocal) {
+      return Center(
+          child: CircularProgressIndicator(color: widget.primaryColor));
+    }
+    if (_localPapers.isEmpty) {
       return Center(
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -87,14 +227,14 @@ class LibraryTabState extends State<LibraryTab> {
           child: Row(
             children: [
               Text(
-                AppMessages.labelSavedNotesCount(_papers.length),
+                AppMessages.labelSavedNotesCount(_localPapers.length),
                 style: const TextStyle(fontWeight: FontWeight.bold),
               ),
               const Spacer(),
               IconButton(
                 icon: const Icon(Icons.refresh, size: 20),
                 tooltip: AppMessages.get(MessageKey.libraryRefreshTooltip),
-                onPressed: _refresh,
+                onPressed: _refreshLocal,
               ),
             ],
           ),
@@ -102,42 +242,242 @@ class LibraryTabState extends State<LibraryTab> {
         const Divider(height: 1),
         Expanded(
           child: ListView.builder(
-            itemCount: _papers.length,
+            itemCount: _localPapers.length,
             itemBuilder: (context, index) {
-              final Map<String, String> paper = _papers[index];
+              final paper = _localPapers[index];
               return ListTile(
                 leading: CircleAvatar(
-                  backgroundColor: widget.primaryColor.withValues(alpha: 0.1),
-                  child: Icon(
-                    Icons.description,
-                    size: 16,
-                    color: widget.primaryColor,
-                  ),
+                  backgroundColor:
+                      widget.primaryColor.withValues(alpha: 0.1),
+                  child: Icon(Icons.description,
+                      size: 16, color: widget.primaryColor),
                 ),
                 title: Text(
                   paper['title']!,
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w500,
-                  ),
+                      fontSize: 13, fontWeight: FontWeight.w500),
                 ),
-                subtitle: Text(
-                  'Year: ${paper['year']}',
-                  style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
-                ),
-                trailing: Icon(
-                  Icons.arrow_forward_ios,
-                  size: 12,
-                  color: Colors.grey.shade400,
-                ),
-                onTap: () => widget.onOpenPaper(paper['dedup_key'] ?? paper['path'] ?? ''),
+                subtitle: Text('Year: ${paper['year']}',
+                    style: TextStyle(
+                        fontSize: 11, color: Colors.grey.shade600)),
+                trailing: Icon(Icons.arrow_forward_ios,
+                    size: 12, color: Colors.grey.shade400),
+                onTap: () => widget
+                    .onOpenPaper(paper['dedup_key'] ?? paper['path'] ?? ''),
               );
             },
           ),
         ),
       ],
+    );
+  }
+
+  // ─── Zotero tab ─────────────────────────────────────────────────────────────
+
+  Widget _buildZoteroTab() {
+    if (_isLoadingZotero) {
+      return Center(
+          child: CircularProgressIndicator(color: widget.primaryColor));
+    }
+
+    if (_zoteroError != null) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24.0),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.cloud_off, size: 40, color: Colors.red.shade300),
+              const SizedBox(height: 12),
+              Text(
+                'Failed to load Zotero collection',
+                style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    color: Colors.red.shade700),
+              ),
+              const SizedBox(height: 6),
+              Text(_zoteroError!,
+                  style: TextStyle(
+                      fontSize: 12, color: Colors.grey.shade600),
+                  textAlign: TextAlign.center),
+              const SizedBox(height: 16),
+              OutlinedButton.icon(
+                onPressed: _refreshZotero,
+                icon: const Icon(Icons.refresh, size: 16),
+                label: const Text('Retry'),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    if (_zoteroItems.isEmpty) {
+      return Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.cloud_queue, size: 48, color: Colors.grey.shade300),
+            const SizedBox(height: 12),
+            Text('No papers in this Zotero collection.',
+                style: TextStyle(color: Colors.grey.shade500)),
+            const SizedBox(height: 12),
+            OutlinedButton.icon(
+              onPressed: _refreshZotero,
+              icon: const Icon(Icons.refresh, size: 16),
+              label: const Text('Refresh'),
+            ),
+          ],
+        ),
+      );
+    }
+
+    final filtered = _searchQuery.isEmpty
+        ? _zoteroItems
+        : _zoteroItems.where((r) {
+            final q = _searchQuery.toLowerCase();
+            return r.item.title.toLowerCase().contains(q) ||
+                r.item.authors.toLowerCase().contains(q);
+          }).toList();
+
+    final notImported = _zoteroItems.where((r) => !r.isLocal).length;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        // Toolbar
+        Padding(
+          padding: const EdgeInsets.fromLTRB(12, 8, 8, 4),
+          child: Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  decoration: InputDecoration(
+                    hintText: 'Search papers…',
+                    prefixIcon:
+                        const Icon(Icons.search, size: 18),
+                    isDense: true,
+                    contentPadding:
+                        const EdgeInsets.symmetric(vertical: 8),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                  ),
+                  style: const TextStyle(fontSize: 13),
+                  onChanged: (v) => setState(() => _searchQuery = v),
+                ),
+              ),
+              IconButton(
+                icon: const Icon(Icons.refresh, size: 20),
+                tooltip: 'Refresh from Zotero',
+                onPressed: _refreshZotero,
+              ),
+            ],
+          ),
+        ),
+        if (notImported > 0)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 0, 12, 4),
+            child: Row(
+              children: [
+                Text(
+                  '$notImported not imported yet',
+                  style: TextStyle(
+                      fontSize: 11, color: Colors.grey.shade600),
+                ),
+                const Spacer(),
+                TextButton.icon(
+                  onPressed: _importingKey != null
+                      ? null
+                      : () async {
+                          for (final r
+                              in _zoteroItems.where((r) => !r.isLocal)) {
+                            await _importItem(r.item);
+                            if (!mounted) return;
+                          }
+                        },
+                  icon: const Icon(Icons.download_for_offline_outlined,
+                      size: 14),
+                  label: const Text('Import All',
+                      style: TextStyle(fontSize: 12)),
+                  style: TextButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 8, vertical: 0),
+                    minimumSize: Size.zero,
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        const Divider(height: 1),
+        Expanded(
+          child: ListView.builder(
+            itemCount: filtered.length,
+            itemBuilder: (context, i) =>
+                _buildZoteroItem(filtered[i]),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildZoteroItem(({ZoteroItem item, bool isLocal}) record) {
+    final item = record.item;
+    final isLocal = record.isLocal;
+    final isImporting = _importingKey == item.key;
+
+    return ListTile(
+      leading: CircleAvatar(
+        backgroundColor: isLocal
+            ? Colors.green.shade50
+            : widget.primaryColor.withValues(alpha: 0.08),
+        child: Icon(
+          isLocal ? Icons.check : Icons.cloud_outlined,
+          size: 16,
+          color: isLocal ? Colors.green.shade700 : widget.primaryColor,
+        ),
+      ),
+      title: Text(
+        item.title,
+        maxLines: 2,
+        overflow: TextOverflow.ellipsis,
+        style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
+      ),
+      subtitle: Text(
+        [item.authors, if (item.year != null) item.year!]
+            .where((s) => s.isNotEmpty)
+            .join(' · '),
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
+      ),
+      trailing: isLocal
+          ? Chip(
+              label: const Text('Saved',
+                  style: TextStyle(fontSize: 10)),
+              backgroundColor: Colors.green.shade50,
+              side: BorderSide(color: Colors.green.shade200),
+              padding: EdgeInsets.zero,
+              visualDensity: VisualDensity.compact,
+            )
+          : isImporting
+              ? SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(
+                      strokeWidth: 2, color: widget.primaryColor),
+                )
+              : Tooltip(
+                  message: 'Download & extract this paper',
+                  child: IconButton(
+                    icon: Icon(Icons.download_outlined,
+                        size: 18, color: widget.primaryColor),
+                    onPressed: () => _importItem(item),
+                  ),
+                ),
     );
   }
 }

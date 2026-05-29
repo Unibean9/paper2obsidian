@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 import 'config/env_config.dart';
 import 'screens/main_screen.dart';
+import 'services/database_service.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  DatabaseService.initializeFfi();
   await EnvConfig.load();
   runApp(const PaperToObsidianApp());
 }

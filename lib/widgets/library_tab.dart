@@ -132,7 +132,7 @@ class LibraryTabState extends State<LibraryTab> {
                   size: 12,
                   color: Colors.grey.shade400,
                 ),
-                onTap: () => widget.onOpenPaper(paper['path']!),
+                onTap: () => widget.onOpenPaper(paper['dedup_key'] ?? paper['path'] ?? ''),
               );
             },
           ),

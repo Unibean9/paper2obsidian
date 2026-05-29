@@ -9,6 +9,7 @@ import '../constants/messages.dart';
 import '../models/paper_metadata.dart';
 import '../services/api_service.dart';
 import '../services/logger_service.dart';
+import '../services/paper_repository.dart';
 import '../services/vault_index_service.dart';
 import '../utils/title_inference.dart';
 
@@ -18,6 +19,7 @@ class PaperController {
     required this.onLog,
     this.vaultIndexService,
     this.onIndexingStatus,
+    this.paperRepository,
   });
 
   final ResearchApiService apiService;
@@ -27,6 +29,8 @@ class PaperController {
   final VaultIndexService? vaultIndexService;
 
   final void Function(String? message)? onIndexingStatus;
+
+  final PaperRepository? paperRepository;
 
   bool isCancelled = false;
 
@@ -382,6 +386,23 @@ ${meta.summary}
     final File mdFile = File(p.join(paperDirPath, mdFileName));
     await mdFile.writeAsString(markdownContent);
 
+    if (paperRepository != null) {
+      try {
+        final PaperMetadata metaWithPdf = meta.resolvedPdf == null
+            ? meta.copyWith(resolvedPdf: destPdf)
+            : (meta.resolvedPdf!.path == destPdf.path
+                  ? meta
+                  : meta.copyWith(resolvedPdf: destPdf));
+        await paperRepository!.insertPaper(metaWithPdf);
+      } catch (e) {
+        AppLogger.log(
+          'DB insert failed after vault write — paper saved to vault but not indexed in DB',
+          category: LogCategory.other,
+          error: e,
+        );
+      }
+    }
+
     await _createInternalNotes(meta.authors, 'Authors', vaultPath);
     await _createInternalNotes(meta.keywords, 'Tags', vaultPath);
     await _createInternalNotes(meta.dataset, 'Datasets', vaultPath);
@@ -412,6 +433,74 @@ ${meta.summary}
           onIndexingStatus?.call(null);
         }
       }();
+    }
+  }
+
+  Future<void> deletePaperFromLibrary({
+    required String dedupKey,
+    required String vaultPath,
+  }) async {
+    // Look up the paper title BEFORE deleting from DB, since dedupKey may be
+    // a bare DOI (no title component) and vault files are named by title.
+    String? paperTitle;
+    if (paperRepository != null) {
+      try {
+        final PaperMetadata? paper = await paperRepository!.findByDedupKey(
+          dedupKey,
+        );
+        paperTitle = paper?.title;
+        await paperRepository!.deletePaper(dedupKey);
+      } catch (e) {
+        AppLogger.log(
+          'DB delete failed for "$dedupKey"',
+          category: LogCategory.other,
+          error: e,
+        );
+      }
+    }
+
+    // Derive the vault filename base. saveToObsidian applies safeTitle sanitisation
+    // (replaces [\\/:*?"<>|] with _) — use the same transform here so the
+    // comparison matches what was actually written to disk.
+    String rawTitle = paperTitle?.trim().isNotEmpty == true
+        ? paperTitle!.trim()
+        : (dedupKey.contains('|') ? dedupKey.split('|').first : '');
+    final String titleForMatch = rawTitle.replaceAll(
+      RegExp(r'[\\/:*?"<>|]'),
+      '_',
+    );
+
+    if (titleForMatch.isEmpty) return;
+
+    // Delete .md and PDF from vault
+    final String paperDirPath = p.join(vaultPath, 'Papers');
+    try {
+      final Directory paperDir = Directory(paperDirPath);
+      if (!await paperDir.exists()) return;
+      final List<FileSystemEntity> files = paperDir.listSync();
+      for (final FileSystemEntity file in files) {
+        if (file is! File) continue;
+        final String name = p.basenameWithoutExtension(file.path);
+        final String ext = p.extension(file.path).toLowerCase();
+        if (name.toLowerCase() == titleForMatch.toLowerCase() &&
+            (ext == '.md' || ext == '.pdf')) {
+          try {
+            await file.delete();
+          } catch (e) {
+            AppLogger.log(
+              'Failed to delete vault file ${file.path}',
+              category: LogCategory.other,
+              error: e,
+            );
+          }
+        }
+      }
+    } catch (e) {
+      AppLogger.log(
+        'Failed to scan vault for deletion',
+        category: LogCategory.other,
+        error: e,
+      );
     }
   }
 
@@ -447,6 +536,29 @@ ${meta.summary}
   Future<List<Map<String, String>>> loadVaultLibrary(String vaultPath) async {
     if (vaultPath.isEmpty) return [];
 
+    if (paperRepository != null) {
+      try {
+        final List<PaperMetadata> papers = await paperRepository!
+            .getAllPapers();
+        return papers
+            .map(
+              (m) => {
+                'title': m.title,
+                'year': m.year.isEmpty ? 'Not Given' : m.year,
+                'dedup_key': m.dedupKey,
+              },
+            )
+            .toList();
+      } catch (e) {
+        AppLogger.log(
+          'DB load failed, falling back to vault scan',
+          category: LogCategory.other,
+          error: e,
+        );
+      }
+    }
+
+    // Fallback: scan vault markdown files (used when DB is unavailable)
     final List<Map<String, String>> papers = [];
     try {
       final Directory paperDir = Directory(p.join(vaultPath, 'Papers'));
@@ -457,15 +569,12 @@ ${meta.summary}
             final String content = await file.readAsString();
             final String title = p.basenameWithoutExtension(file.path);
             String year = 'Not Given';
-
-            // Parse year from YAML frontmatter using regex.
             final RegExp yearRegex = RegExp(r'year:\s*"\[\[Years\/(.*?)\]\]"');
             final RegExpMatch? match = yearRegex.firstMatch(content);
             if (match != null && match.groupCount >= 1) {
               year = match.group(1) ?? 'Not Given';
             }
-
-            papers.add({'title': title, 'year': year, 'path': file.path});
+            papers.add({'title': title, 'year': year, 'dedup_key': file.path});
           }
         }
       }
@@ -479,7 +588,48 @@ ${meta.summary}
     return papers;
   }
 
-  Future<PaperMetadata> openPaperFromLibrary(String mdPath) async {
+  Future<PaperMetadata> openPaperFromLibrary(String dedupKeyOrPath) async {
+    if (paperRepository != null) {
+      try {
+        final PaperMetadata? found = await paperRepository!.findByDedupKey(
+          dedupKeyOrPath,
+        );
+        if (found != null) {
+          onLog(AppMessages.statusPdfFound(found.title));
+          if (found.fullPdfText.isNotEmpty) return found;
+          // fullPdfText missing — re-extract from PDF if available
+          if (found.resolvedPdf != null) {
+            final PdfDocument doc = PdfDocument(
+              inputBytes: await found.resolvedPdf!.readAsBytes(),
+            );
+            final int maxPages = doc.pages.count > 10 ? 10 : doc.pages.count;
+            final String text = PdfTextExtractor(
+              doc,
+            ).extractText(startPageIndex: 0, endPageIndex: maxPages - 1);
+            doc.dispose();
+            return found.copyWith(fullPdfText: text);
+          }
+          // No fullPdfText and no PDF to re-extract — return with empty context.
+          AppLogger.log(
+            'Paper "${found.title}" opened with no PDF text — chat context will be empty',
+            category: LogCategory.other,
+          );
+          onLog(
+            'Warning: no PDF text available for this paper — chat may not work.',
+          );
+          return found;
+        }
+      } catch (e) {
+        AppLogger.log(
+          'DB lookup failed for "$dedupKeyOrPath", falling back to markdown parse',
+          category: LogCategory.other,
+          error: e,
+        );
+      }
+    }
+
+    // Fallback: treat arg as an .md file path and parse it
+    final String mdPath = dedupKeyOrPath;
     final File mdFile = File(mdPath);
     final String content = await mdFile.readAsString();
 

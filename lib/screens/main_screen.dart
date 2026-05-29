@@ -12,7 +12,9 @@ import '../controllers/paper_controller.dart';
 import '../models/paper_metadata.dart';
 import '../services/api_service.dart';
 import '../services/bedrock_client.dart';
+import '../services/database_service.dart';
 import '../services/logger_service.dart';
+import '../services/paper_repository.dart';
 import '../services/vault_index_service.dart';
 import '../utils/desktop_file_helper.dart';
 import '../utils/vault_access.dart';
@@ -67,6 +69,8 @@ class _MainScreenState extends State<MainScreen> {
   late ResearchApiService researchApiService;
   late VaultIndexService _vaultIndexService;
   late PaperController _paperController;
+  final PaperRepository _paperRepository =
+      PaperRepository(DatabaseService.instance);
 
   // GlobalKey for triggering LibraryTab refresh after save
   final GlobalKey<LibraryTabState> _libraryTabKey =
@@ -86,6 +90,7 @@ class _MainScreenState extends State<MainScreen> {
       apiService: researchApiService,
       onLog: _addLog,
       vaultIndexService: _vaultIndexService,
+      paperRepository: _paperRepository,
       onIndexingStatus: (msg) {
         if (!mounted) return;
         setState(() {
@@ -128,11 +133,19 @@ class _MainScreenState extends State<MainScreen> {
 
   Future<void> _loadSettings() async {
     final prefs = await SharedPreferences.getInstance();
+    final rawPath = prefs.getString('vaultPath') ?? '';
+    final path = rawPath.isEmpty ? '' : p.normalize(rawPath);
+
+    // Open DB before setState so LibraryTab's first load finds an open DB.
+    if (path.isNotEmpty) {
+      await DatabaseService.instance.openForVault(path);
+    }
+
+    if (!mounted) return;
     setState(() {
-      // Normalize vault path for cross-platform compatibility (but keep empty as empty)
-      final rawPath = prefs.getString('vaultPath') ?? '';
-      vaultPath = rawPath.isEmpty ? '' : p.normalize(rawPath);
+      vaultPath = path;
     });
+
     // LibraryTab reloads automatically via didUpdateWidget when vaultPath changes
     if (vaultPath.isNotEmpty) {
       await _vaultIndexService.loadIndex(vaultPath);
@@ -278,8 +291,8 @@ class _MainScreenState extends State<MainScreen> {
         onSave: (newPath) async {
           setState(() => vaultPath = newPath);
           await _saveSettings();
-          // Reload index for the new vault path
           if (newPath.isNotEmpty) {
+            await DatabaseService.instance.openForVault(newPath);
             await _vaultIndexService.loadIndex(newPath);
             await _checkStaleness();
           }

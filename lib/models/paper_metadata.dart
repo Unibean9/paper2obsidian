@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 enum PaperStatus {
@@ -46,6 +47,68 @@ class PaperMetadata {
   final String fullPdfText;
 
   final File? resolvedPdf;
+
+  String get dedupKey {
+    final d = doi.trim();
+    if (d.isNotEmpty) return d;
+    final t = title.trim().toLowerCase();
+    final y = year.trim();
+    return '$t|$y';
+  }
+
+  Map<String, Object?> toMap() => {
+    'title': title,
+    'authors': authors,
+    'venue': venue,
+    'year': year,
+    'doi': doi.trim().isEmpty ? null : doi.trim(),
+    'keywords': keywords,
+    'dataset': dataset,
+    'problem_statement': problemStatement,
+    'limitation': limitation,
+    'summary': summary,
+    'abstract': abstract,
+    'citations': jsonEncode(citations),
+    'full_pdf_text': fullPdfText,
+    'resolved_pdf_path': resolvedPdf?.path,
+    'dedup_key': dedupKey,
+  };
+
+  factory PaperMetadata.fromMap(Map<String, Object?> map) {
+    final citationsRaw = map['citations'] as String?;
+    List<String> citations = [];
+    if (citationsRaw != null && citationsRaw.isNotEmpty) {
+      try {
+        citations = (jsonDecode(citationsRaw) as List)
+            .map((e) => e.toString())
+            .toList();
+      } catch (_) {}
+    }
+
+    final pdfPath = map['resolved_pdf_path'] as String?;
+    File? resolvedPdf;
+    if (pdfPath != null && pdfPath.isNotEmpty) {
+      final f = File(pdfPath);
+      resolvedPdf = f.existsSync() ? f : null;
+    }
+
+    return PaperMetadata(
+      title: (map['title'] as String?) ?? '',
+      authors: (map['authors'] as String?) ?? '',
+      venue: (map['venue'] as String?) ?? '',
+      year: (map['year'] as String?) ?? '',
+      doi: (map['doi'] as String?) ?? '',
+      keywords: (map['keywords'] as String?) ?? '',
+      dataset: (map['dataset'] as String?) ?? '',
+      problemStatement: (map['problem_statement'] as String?) ?? '',
+      limitation: (map['limitation'] as String?) ?? '',
+      summary: (map['summary'] as String?) ?? '',
+      abstract: (map['abstract'] as String?) ?? '',
+      citations: citations,
+      fullPdfText: (map['full_pdf_text'] as String?) ?? '',
+      resolvedPdf: resolvedPdf,
+    );
+  }
 
   PaperMetadata copyWith({
     String? title,

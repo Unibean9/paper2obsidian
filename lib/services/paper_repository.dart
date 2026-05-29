@@ -66,6 +66,15 @@ class PaperRepository {
     return rows.isEmpty ? null : PaperMetadata.fromMap(rows.first);
   }
 
+  Future<void> updateZoteroKey(String dedupKey, String zoteroKey) async {
+    await _db.update(
+      'papers',
+      {'zotero_item_key': zoteroKey},
+      where: 'dedup_key = ?',
+      whereArgs: [dedupKey],
+    );
+  }
+
   /// Returns a Set of all Zotero item keys that have been imported locally.
   Future<Set<String>> getAllImportedZoteroKeys() async {
     final rows = await _db.query(

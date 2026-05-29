@@ -427,7 +427,8 @@ class ZoteroService {
   }
 
   /// Full 5-stage upload. Handles the `{"exists": 1}` short-circuit.
-  Future<void> uploadPdf({
+  /// Returns the Zotero parent item key created in Stage 1.
+  Future<String> uploadPdf({
     required String collectionKey,
     required String title,
     required String authors,
@@ -471,7 +472,7 @@ class ZoteroService {
       onProgress('File already exists in Zotero — upload skipped.');
       AppLogger.log('Stage 3: file already exists, skipping S3 upload',
           category: LogCategory.network);
-      return;
+      return parentKey;
     }
 
     final auth = authResult as Map<String, dynamic>;
@@ -498,6 +499,7 @@ class ZoteroService {
         category: LogCategory.network);
 
     onProgress('Upload complete.');
+    return parentKey;
   }
 
   // =========================================================================

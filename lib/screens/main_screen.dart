@@ -49,6 +49,7 @@ class _MainScreenState extends State<MainScreen> {
   bool _isZoteroConfigured = false;
   bool _isFromZotero = false;
   String? _pendingZoteroItemKey; // key imported but not yet saved to Obsidian
+  String? _currentPaperDedupKey; // dedupKey of paper currently open in viewer
 
   String get vaultPath => _activeProject?.vaultPath ?? '';
   String? get _activeCollectionKey => _activeProject?.zoteroCollectionKey;
@@ -82,8 +83,9 @@ class _MainScreenState extends State<MainScreen> {
   late ResearchApiService researchApiService;
   late VaultIndexService _vaultIndexService;
   late PaperController _paperController;
-  final PaperRepository _paperRepository =
-      PaperRepository(DatabaseService.instance);
+  final PaperRepository _paperRepository = PaperRepository(
+    DatabaseService.instance,
+  );
 
   // GlobalKey for triggering LibraryTab refresh after save
   final GlobalKey<LibraryTabState> _libraryTabKey =
@@ -533,9 +535,6 @@ class _MainScreenState extends State<MainScreen> {
   // =========================================================================
 
   Future<void> _openPaperFromLibrary(String mdPath) async {
-    // Only normalize if it's an absolute file path — DOI keys (e.g. "10.1057/s41...")
-    // must NOT be normalized because p.normalize converts '/' to '\' on Windows,
-    // breaking the DB lookup.
     final normalizedPath = p.isAbsolute(mdPath) ? p.normalize(mdPath) : mdPath;
     final displayName = p.isAbsolute(normalizedPath)
         ? p.basename(normalizedPath)
@@ -679,16 +678,13 @@ class _MainScreenState extends State<MainScreen> {
 
     setState(() => isLoading = true);
     try {
-      final items =
-          await _paperController.listZoteroItems(collectionKey);
+      final items = await _paperController.listZoteroItems(collectionKey);
       if (!mounted) return;
 
       final picked = await showDialog<dynamic>(
         context: context,
-        builder: (_) => ZoteroItemPickerDialog(
-          items: items,
-          collectionName: collectionKey,
-        ),
+        builder: (_) =>
+            ZoteroItemPickerDialog(items: items, collectionName: collectionKey),
       );
       if (picked == null || !mounted) return;
 
@@ -756,12 +752,23 @@ class _MainScreenState extends State<MainScreen> {
         fullPdfText: fullPdfText,
         resolvedPdf: selectedPdf,
       );
-      await _paperController.exportToZotero(
+      final zoteroKey = await _paperController.exportToZotero(
         collectionKey: collectionKey,
         meta: meta,
         pdf: selectedPdf!,
       );
-      if (mounted) _showUserMessage('✅ Exported to Zotero successfully.');
+      // Save the new Zotero key to the local DB record so the Zotero tab
+      // shows "Saved" and prevents duplicate imports.
+      if (_currentPaperDedupKey != null) {
+        try {
+          await _paperRepository.updateZoteroKey(_currentPaperDedupKey!, zoteroKey);
+        } catch (_) {}
+      }
+      if (mounted) {
+        setState(() => _isFromZotero = true);
+        _libraryTabKey.currentState?.refresh();
+        _showUserMessage('✅ Exported to Zotero successfully.');
+      }
     } catch (e) {
       _addLog('❌ Zotero export failed: $e');
       _showUserMessage('Export to Zotero failed: $e', isError: true);
@@ -786,6 +793,7 @@ class _MainScreenState extends State<MainScreen> {
       _paperAbstract = meta.abstract;
       _isFromZotero = meta.zoteroItemKey != null;
       _pendingZoteroItemKey = meta.zoteroItemKey;
+      _currentPaperDedupKey = meta.dedupKey.isNotEmpty ? meta.dedupKey : null;
       if (meta.fullPdfText.isNotEmpty) fullPdfText = meta.fullPdfText;
       if (meta.resolvedPdf != null) selectedPdf = meta.resolvedPdf;
     });
@@ -818,7 +826,8 @@ class _MainScreenState extends State<MainScreen> {
           if (_activeProject != null) ...[
             const SizedBox(width: 8),
             ProjectStatusIndicator(
-              hasCollectionKey: _activeCollectionKey != null &&
+              hasCollectionKey:
+                  _activeCollectionKey != null &&
                   _activeCollectionKey!.isNotEmpty,
               isZoteroConfigured: _isZoteroConfigured,
             ),
@@ -837,144 +846,149 @@ class _MainScreenState extends State<MainScreen> {
       body: _activeProject == null && !_isSwitching
           ? _buildNoProjectState()
           : Padding(
-        padding: const EdgeInsets.all(20.0),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            SizedBox(
-              width: 260,
-              child: ActionsPanel(
-                paperStatus: _paperStatus,
-                isLoading: isLoading,
-                vaultPath: vaultPath,
-                selectedPdf: selectedPdf,
-                progressLogs: progressLogs,
-                statusText: statusText,
-                primaryColor: primaryColor,
-                onPickPdf: _pickPdf,
-                onExtract: _extractPaper,
-                onDiscard: _discardPaper,
-                onSaveToObsidian: _saveToObsidian,
-                onCancel: _handleCancel,
-                isZoteroConfigured: _isZoteroConfigured,
-                activeCollectionKey: _activeCollectionKey,
-                onImportFromZotero: _importFromZotero,
-                onExportFromZotero: _exportToZotero,
-                isFromZotero: _isFromZotero,
-              ),
-            ),
-
-            const SizedBox(width: 20),
-            Expanded(
-              flex: 5,
-              child: PdfViewerPanel(
-                selectedPdf: selectedPdf,
-                primaryColor: primaryColor,
-              ),
-            ),
-
-            const SizedBox(width: 20),
-            Expanded(
-              flex: 4,
-              child: PanelContainer(
-                padding: EdgeInsets.zero,
-                child: DefaultTabController(
-                  length: 4,
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      Container(
-                        color: Colors.grey.shade50,
-                        child: TabBar(
-                          indicatorColor: primaryColor,
-                          indicatorWeight: 3,
-                          labelColor: primaryColor,
-                          unselectedLabelColor: Colors.grey.shade600,
-                          tabs: const [
-                            Tab(
-                              icon: Icon(Icons.auto_awesome, size: 18),
-                              text: 'Metadata',
-                            ),
-                            Tab(
-                              icon: Icon(Icons.chat_bubble_outline, size: 18),
-                              text: 'AI Chat',
-                            ),
-                            Tab(
-                              icon: Icon(Icons.format_quote, size: 18),
-                              text: 'Citations',
-                            ),
-                            Tab(
-                              icon: Icon(Icons.local_library, size: 18),
-                              text: 'Library',
-                            ),
-                          ],
-                        ),
-                      ),
-                      const Divider(height: 1),
-                      Expanded(
-                        child: TabBarView(
-                          children: [
-                            MetadataTab(
-                              titleCtrl: _titleCtrl,
-                              authorsCtrl: _authorsCtrl,
-                              venueCtrl: _venueCtrl,
-                              yearCtrl: _yearCtrl,
-                              doiCtrl: _doiCtrl,
-                              keywordsCtrl: _keywordsCtrl,
-                              datasetCtrl: _datasetCtrl,
-                              problemCtrl: _problemCtrl,
-                              limitationCtrl: _limitationCtrl,
-                              summaryCtrl: _summaryCtrl,
-                            ),
-                            ChatTab(
-                              vaultIndexService: _vaultIndexService,
-                              bedrockClient: _bedrockClient,
-                              primaryColor: primaryColor,
-                              showStaleBanner: _indexStale && !_bannerDismissed,
-                              onRebuildIndex: _rebuildIndex,
-                              onDismissBanner: () =>
-                                  setState(() => _bannerDismissed = true),
-                              initialMessages: List.from(
-                                _chatHistory[_globalChatKey] ?? [],
-                              ),
-                              onMessagesChanged: _onChatMessagesChanged,
-                              // onCitationsUpdated intentionally not wired:
-                              // paperCitations is set exclusively from
-                              // _applyMetadata(meta.citations) so the
-                              // Extracted Citations panel always shows the
-                              // paper's bibliography, not AI RAG results.
-                              indexRevision: _indexRevision,
-                            ),
-                            CitationsTab(
-                              citations: paperCitations,
-                              primaryColor: primaryColor,
-                            ),
-                            LibraryTab(
-                              key: _libraryTabKey,
-                              vaultPath: vaultPath,
-                              onOpenPaper: _openPaperFromLibrary,
-                              loadLibrary: _loadLibrary,
-                              primaryColor: primaryColor,
-                              isZoteroConfigured: _isZoteroConfigured,
-                              activeCollectionKey: _activeCollectionKey,
-                              loadZoteroCollection: _activeCollectionKey != null
-                                  ? _paperController
-                                      .loadZoteroCollectionWithStatus
-                                  : null,
-                              onImportZoteroItem: _importZoteroItem,
-                              pendingZoteroItemKey: _pendingZoteroItemKey,
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
+              padding: const EdgeInsets.all(20.0),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  SizedBox(
+                    width: 260,
+                    child: ActionsPanel(
+                      paperStatus: _paperStatus,
+                      isLoading: isLoading,
+                      vaultPath: vaultPath,
+                      selectedPdf: selectedPdf,
+                      progressLogs: progressLogs,
+                      statusText: statusText,
+                      primaryColor: primaryColor,
+                      onPickPdf: _pickPdf,
+                      onExtract: _extractPaper,
+                      onDiscard: _discardPaper,
+                      onSaveToObsidian: _saveToObsidian,
+                      onCancel: _handleCancel,
+                      isZoteroConfigured: _isZoteroConfigured,
+                      activeCollectionKey: _activeCollectionKey,
+                      onImportFromZotero: _importFromZotero,
+                      onExportFromZotero: _exportToZotero,
+                      isFromZotero: _isFromZotero,
+                    ),
                   ),
-                ),
+
+                  const SizedBox(width: 20),
+                  Expanded(
+                    flex: 5,
+                    child: PdfViewerPanel(
+                      selectedPdf: selectedPdf,
+                      primaryColor: primaryColor,
+                    ),
+                  ),
+
+                  const SizedBox(width: 20),
+                  Expanded(
+                    flex: 4,
+                    child: PanelContainer(
+                      padding: EdgeInsets.zero,
+                      child: DefaultTabController(
+                        length: 4,
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            Container(
+                              color: Colors.grey.shade50,
+                              child: TabBar(
+                                indicatorColor: primaryColor,
+                                indicatorWeight: 3,
+                                labelColor: primaryColor,
+                                unselectedLabelColor: Colors.grey.shade600,
+                                tabs: const [
+                                  Tab(
+                                    icon: Icon(Icons.auto_awesome, size: 18),
+                                    text: 'Metadata',
+                                  ),
+                                  Tab(
+                                    icon: Icon(
+                                      Icons.chat_bubble_outline,
+                                      size: 18,
+                                    ),
+                                    text: 'AI Chat',
+                                  ),
+                                  Tab(
+                                    icon: Icon(Icons.format_quote, size: 18),
+                                    text: 'Citations',
+                                  ),
+                                  Tab(
+                                    icon: Icon(Icons.local_library, size: 18),
+                                    text: 'Library',
+                                  ),
+                                ],
+                              ),
+                            ),
+                            const Divider(height: 1),
+                            Expanded(
+                              child: TabBarView(
+                                children: [
+                                  MetadataTab(
+                                    titleCtrl: _titleCtrl,
+                                    authorsCtrl: _authorsCtrl,
+                                    venueCtrl: _venueCtrl,
+                                    yearCtrl: _yearCtrl,
+                                    doiCtrl: _doiCtrl,
+                                    keywordsCtrl: _keywordsCtrl,
+                                    datasetCtrl: _datasetCtrl,
+                                    problemCtrl: _problemCtrl,
+                                    limitationCtrl: _limitationCtrl,
+                                    summaryCtrl: _summaryCtrl,
+                                  ),
+                                  ChatTab(
+                                    vaultIndexService: _vaultIndexService,
+                                    bedrockClient: _bedrockClient,
+                                    primaryColor: primaryColor,
+                                    showStaleBanner:
+                                        _indexStale && !_bannerDismissed,
+                                    onRebuildIndex: _rebuildIndex,
+                                    onDismissBanner: () =>
+                                        setState(() => _bannerDismissed = true),
+                                    initialMessages: List.from(
+                                      _chatHistory[_globalChatKey] ?? [],
+                                    ),
+                                    onMessagesChanged: _onChatMessagesChanged,
+                                    // onCitationsUpdated intentionally not wired:
+                                    // paperCitations is set exclusively from
+                                    // _applyMetadata(meta.citations) so the
+                                    // Extracted Citations panel always shows the
+                                    // paper's bibliography, not AI RAG results.
+                                    indexRevision: _indexRevision,
+                                  ),
+                                  CitationsTab(
+                                    citations: paperCitations,
+                                    primaryColor: primaryColor,
+                                  ),
+                                  LibraryTab(
+                                    key: _libraryTabKey,
+                                    vaultPath: vaultPath,
+                                    onOpenPaper: _openPaperFromLibrary,
+                                    loadLibrary: _loadLibrary,
+                                    primaryColor: primaryColor,
+                                    isZoteroConfigured: _isZoteroConfigured,
+                                    activeCollectionKey: _activeCollectionKey,
+                                    loadZoteroCollection:
+                                        _activeCollectionKey != null
+                                        ? _paperController
+                                              .loadZoteroCollectionWithStatus
+                                        : null,
+                                    onImportZoteroItem: _importZoteroItem,
+                                    pendingZoteroItemKey: _pendingZoteroItemKey,
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ),
-          ],
-        ),
-      ),
     );
   }
 
@@ -983,15 +997,19 @@ class _MainScreenState extends State<MainScreen> {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(Icons.folder_special_outlined,
-              size: 64, color: Colors.grey.shade400),
+          Icon(
+            Icons.folder_special_outlined,
+            size: 64,
+            color: Colors.grey.shade400,
+          ),
           const SizedBox(height: 16),
           Text(
             'No project open',
             style: TextStyle(
-                fontSize: 20,
-                fontWeight: FontWeight.w600,
-                color: Colors.grey.shade700),
+              fontSize: 20,
+              fontWeight: FontWeight.w600,
+              color: Colors.grey.shade700,
+            ),
           ),
           const SizedBox(height: 8),
           Text(

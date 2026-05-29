@@ -868,7 +868,8 @@ ${meta.summary}
   }
 
   /// Uploads a processed paper's PDF + metadata back to a Zotero collection.
-  Future<void> exportToZotero({
+  /// Returns the Zotero parent item key that was created.
+  Future<String> exportToZotero({
     required String collectionKey,
     required PaperMetadata meta,
     required File pdf,
@@ -877,7 +878,7 @@ ${meta.summary}
     final pdfBytes = await pdf.readAsBytes();
     final filename = p.basename(pdf.path);
 
-    await service.uploadPdf(
+    return service.uploadPdf(
       collectionKey: collectionKey,
       title: meta.title.isNotEmpty ? meta.title : filename,
       authors: meta.authors,

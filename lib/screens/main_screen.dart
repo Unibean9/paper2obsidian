@@ -533,7 +533,13 @@ class _MainScreenState extends State<MainScreen> {
   // =========================================================================
 
   Future<void> _openPaperFromLibrary(String mdPath) async {
-    final normalizedPath = p.normalize(mdPath);
+    // Only normalize if it's an absolute file path — DOI keys (e.g. "10.1057/s41...")
+    // must NOT be normalized because p.normalize converts '/' to '\' on Windows,
+    // breaking the DB lookup.
+    final normalizedPath = p.isAbsolute(mdPath) ? p.normalize(mdPath) : mdPath;
+    final displayName = p.isAbsolute(normalizedPath)
+        ? p.basename(normalizedPath)
+        : normalizedPath;
 
     setState(() {
       isLoading = true;
@@ -541,7 +547,7 @@ class _MainScreenState extends State<MainScreen> {
       // Library papers are already processed; enable "Save to Obsidian".
       _paperStatus = PaperStatus.done;
     });
-    _addLog(AppMessages.statusLoadingPaper(p.basename(normalizedPath)));
+    _addLog(AppMessages.statusLoadingPaper(displayName));
 
     try {
       final PaperMetadata meta = await _paperController.openPaperFromLibrary(

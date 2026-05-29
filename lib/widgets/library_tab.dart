@@ -32,7 +32,7 @@ class LibraryTab extends StatefulWidget {
   /// Called when user taps Import on a Zotero item.
   final Future<void> Function(ZoteroItem item)? onImportZoteroItem;
 
-  /// Key of a Zotero item that has been imported but not yet saved to Obsidian.
+  /// Key of a Zotero item imported but not yet saved to Obsidian.
   /// Its Import button is disabled to prevent duplicate downloads.
   final String? pendingZoteroItemKey;
 
@@ -40,71 +40,58 @@ class LibraryTab extends StatefulWidget {
   State<LibraryTab> createState() => LibraryTabState();
 }
 
-class LibraryTabState extends State<LibraryTab>
-    with SingleTickerProviderStateMixin {
-  late TabController _tabController;
+class LibraryTabState extends State<LibraryTab> {
+  // 0 = Local, 1 = Zotero
+  int _activeSection = 0;
 
-  // Local tab state
+  // Local section state
   List<Map<String, String>> _localPapers = [];
   bool _isLoadingLocal = false;
 
-  // Zotero tab state
+  // Zotero section state
   List<({ZoteroItem item, bool isLocal})> _zoteroItems = [];
   bool _isLoadingZotero = false;
   String? _zoteroError;
   String _searchQuery = '';
-  String? _importingKey; // key of item currently being imported
+  String? _importingKey;
+
+  bool get _showZotero =>
+      widget.isZoteroConfigured &&
+      widget.activeCollectionKey != null &&
+      widget.activeCollectionKey!.isNotEmpty;
 
   @override
   void initState() {
     super.initState();
-    final showZotero = _shouldShowZoteroTab;
-    _tabController = TabController(
-      length: showZotero ? 2 : 1,
-      vsync: this,
-    );
     _refreshLocal();
-    if (showZotero) _refreshZotero();
+    if (_showZotero) _refreshZotero();
   }
 
   @override
   void didUpdateWidget(covariant LibraryTab oldWidget) {
     super.didUpdateWidget(oldWidget);
-    final wasZotero = _shouldShowZoteroTab;
-    final nowZotero = widget.isZoteroConfigured &&
-        widget.activeCollectionKey != null &&
-        widget.activeCollectionKey!.isNotEmpty;
 
-    if (widget.vaultPath != oldWidget.vaultPath) _refreshLocal();
+    if (widget.vaultPath != oldWidget.vaultPath) {
+      _refreshLocal();
+    }
 
-    if (widget.activeCollectionKey != oldWidget.activeCollectionKey ||
-        widget.isZoteroConfigured != oldWidget.isZoteroConfigured) {
-      // Rebuild tab controller if Zotero availability changed
-      if (wasZotero != nowZotero) {
-        _tabController.dispose();
-        _tabController = TabController(
-          length: nowZotero ? 2 : 1,
-          vsync: this,
-        );
+    final collectionChanged =
+        widget.activeCollectionKey != oldWidget.activeCollectionKey ||
+            widget.isZoteroConfigured != oldWidget.isZoteroConfigured;
+
+    if (collectionChanged) {
+      // If Zotero panel just became unavailable, snap back to Local
+      if (!_showZotero && _activeSection == 1) {
+        setState(() => _activeSection = 0);
       }
-      if (nowZotero) _refreshZotero();
+      if (_showZotero) _refreshZotero();
     }
   }
 
-  @override
-  void dispose() {
-    _tabController.dispose();
-    super.dispose();
-  }
-
-  bool get _shouldShowZoteroTab =>
-      widget.isZoteroConfigured &&
-      widget.activeCollectionKey != null &&
-      widget.activeCollectionKey!.isNotEmpty;
-
+  // Called by MainScreen after save-to-obsidian to refresh both lists.
   void refresh() {
     _refreshLocal();
-    if (_shouldShowZoteroTab) _refreshZotero();
+    if (_showZotero) _refreshZotero();
   }
 
   Future<void> _refreshLocal() async {
@@ -141,11 +128,10 @@ class LibraryTabState extends State<LibraryTab>
     setState(() => _importingKey = item.key);
     try {
       await widget.onImportZoteroItem!(item);
-      // Do NOT mark isLocal here — paper is only truly local after the user
-      // clicks "Save to Obsidian". MainScreen tracks the pending state via
-      // pendingZoteroItemKey and the Import button stays disabled there.
+      // Do NOT mark isLocal here — paper is only local after "Save to Obsidian".
+      // MainScreen tracks pending state via pendingZoteroItemKey.
     } catch (_) {
-      // Errors are surfaced by MainScreen's _addLog; no extra handling needed here.
+      // Errors are surfaced by MainScreen's progress log.
     } finally {
       if (mounted) setState(() => _importingKey = null);
     }
@@ -157,45 +143,48 @@ class LibraryTabState extends State<LibraryTab>
 
   @override
   Widget build(BuildContext context) {
-    final showZotero = _shouldShowZoteroTab;
-
-    if (!showZotero) {
-      return _buildLocalTab();
-    }
-
     return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        TabBar(
-          controller: _tabController,
-          indicatorColor: widget.primaryColor,
-          labelColor: widget.primaryColor,
-          unselectedLabelColor: Colors.grey.shade600,
-          tabs: [
-            Tab(text: 'Local (${_localPapers.length})'),
-            Tab(
-              text: _isLoadingZotero
-                  ? 'Zotero …'
-                  : 'Zotero (${_zoteroItems.length})',
-            ),
-          ],
-        ),
-        const Divider(height: 1),
+        if (_showZotero) _buildToggleHeader(),
         Expanded(
-          child: TabBarView(
-            controller: _tabController,
-            children: [
-              _buildLocalTab(),
-              _buildZoteroTab(),
-            ],
-          ),
+          child: _activeSection == 1 ? _buildZoteroSection() : _buildLocalSection(),
         ),
       ],
     );
   }
 
-  // ─── Local tab ─────────────────────────────────────────────────────────────
+  Widget _buildToggleHeader() {
+    return Container(
+      color: Colors.grey.shade50,
+      padding: const EdgeInsets.fromLTRB(8, 6, 8, 0),
+      child: Row(
+        children: [
+          _SectionTab(
+            label: 'Local (${_localPapers.length})',
+            icon: Icons.folder_outlined,
+            selected: _activeSection == 0,
+            primaryColor: widget.primaryColor,
+            onTap: () => setState(() => _activeSection = 0),
+          ),
+          const SizedBox(width: 4),
+          _SectionTab(
+            label: _isLoadingZotero
+                ? 'Zotero…'
+                : 'Zotero (${_zoteroItems.length})',
+            icon: Icons.cloud_outlined,
+            selected: _activeSection == 1,
+            primaryColor: widget.primaryColor,
+            onTap: () => setState(() => _activeSection = 1),
+          ),
+        ],
+      ),
+    );
+  }
 
-  Widget _buildLocalTab() {
+  // ─── Local section ─────────────────────────────────────────────────────────
+
+  Widget _buildLocalSection() {
     if (_isLoadingLocal) {
       return Center(
           child: CircularProgressIndicator(color: widget.primaryColor));
@@ -261,8 +250,8 @@ class LibraryTabState extends State<LibraryTab>
                         fontSize: 11, color: Colors.grey.shade600)),
                 trailing: Icon(Icons.arrow_forward_ios,
                     size: 12, color: Colors.grey.shade400),
-                onTap: () => widget
-                    .onOpenPaper(paper['dedup_key'] ?? paper['path'] ?? ''),
+                onTap: () => widget.onOpenPaper(
+                    paper['dedup_key'] ?? paper['path'] ?? ''),
               );
             },
           ),
@@ -271,9 +260,9 @@ class LibraryTabState extends State<LibraryTab>
     );
   }
 
-  // ─── Zotero tab ─────────────────────────────────────────────────────────────
+  // ─── Zotero section ────────────────────────────────────────────────────────
 
-  Widget _buildZoteroTab() {
+  Widget _buildZoteroSection() {
     if (_isLoadingZotero) {
       return Center(
           child: CircularProgressIndicator(color: widget.primaryColor));
@@ -288,16 +277,14 @@ class LibraryTabState extends State<LibraryTab>
             children: [
               Icon(Icons.cloud_off, size: 40, color: Colors.red.shade300),
               const SizedBox(height: 12),
-              Text(
-                'Failed to load Zotero collection',
-                style: TextStyle(
-                    fontWeight: FontWeight.bold,
-                    color: Colors.red.shade700),
-              ),
+              Text('Failed to load Zotero collection',
+                  style: TextStyle(
+                      fontWeight: FontWeight.bold,
+                      color: Colors.red.shade700)),
               const SizedBox(height: 6),
               Text(_zoteroError!,
-                  style: TextStyle(
-                      fontSize: 12, color: Colors.grey.shade600),
+                  style:
+                      TextStyle(fontSize: 12, color: Colors.grey.shade600),
                   textAlign: TextAlign.center),
               const SizedBox(height: 16),
               OutlinedButton.icon(
@@ -344,7 +331,6 @@ class LibraryTabState extends State<LibraryTab>
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        // Toolbar
         Padding(
           padding: const EdgeInsets.fromLTRB(12, 8, 8, 4),
           child: Row(
@@ -353,8 +339,7 @@ class LibraryTabState extends State<LibraryTab>
                 child: TextField(
                   decoration: InputDecoration(
                     hintText: 'Search papers…',
-                    prefixIcon:
-                        const Icon(Icons.search, size: 18),
+                    prefixIcon: const Icon(Icons.search, size: 18),
                     isDense: true,
                     contentPadding:
                         const EdgeInsets.symmetric(vertical: 8),
@@ -379,20 +364,18 @@ class LibraryTabState extends State<LibraryTab>
             padding: const EdgeInsets.fromLTRB(12, 0, 12, 4),
             child: Row(
               children: [
-                Text(
-                  '$notImported not imported yet',
-                  style: TextStyle(
-                      fontSize: 11, color: Colors.grey.shade600),
-                ),
+                Text('$notImported not imported yet',
+                    style: TextStyle(
+                        fontSize: 11, color: Colors.grey.shade600)),
                 const Spacer(),
                 TextButton.icon(
                   onPressed: _importingKey != null
                       ? null
                       : () async {
                           for (final r
-                              in _zoteroItems.where((r) => !r.isLocal)) {
-                            await _importItem(r.item);
+                              in List.of(_zoteroItems.where((r) => !r.isLocal))) {
                             if (!mounted) return;
+                            await _importItem(r.item);
                           }
                         },
                   icon: const Icon(Icons.download_for_offline_outlined,
@@ -400,8 +383,8 @@ class LibraryTabState extends State<LibraryTab>
                   label: const Text('Import All',
                       style: TextStyle(fontSize: 12)),
                   style: TextButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 8, vertical: 0),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 8, vertical: 0),
                     minimumSize: Size.zero,
                     tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                   ),
@@ -413,8 +396,7 @@ class LibraryTabState extends State<LibraryTab>
         Expanded(
           child: ListView.builder(
             itemCount: filtered.length,
-            itemBuilder: (context, i) =>
-                _buildZoteroItem(filtered[i]),
+            itemBuilder: (_, i) => _buildZoteroItem(filtered[i]),
           ),
         ),
       ],
@@ -444,7 +426,6 @@ class LibraryTabState extends State<LibraryTab>
             strokeWidth: 2, color: widget.primaryColor),
       );
     } else if (isPending) {
-      // Downloaded and loaded in main panel — waiting for user to save
       trailing = Chip(
         label: Text('Reviewing…',
             style: TextStyle(fontSize: 10, color: Colors.orange.shade800)),
@@ -457,8 +438,8 @@ class LibraryTabState extends State<LibraryTab>
       trailing = Tooltip(
         message: 'Download & extract this paper',
         child: IconButton(
-          icon: Icon(Icons.download_outlined,
-              size: 18, color: widget.primaryColor),
+          icon:
+              Icon(Icons.download_outlined, size: 18, color: widget.primaryColor),
           onPressed: () => _importItem(item),
         ),
       );
@@ -485,12 +466,10 @@ class LibraryTabState extends State<LibraryTab>
                   : widget.primaryColor,
         ),
       ),
-      title: Text(
-        item.title,
-        maxLines: 2,
-        overflow: TextOverflow.ellipsis,
-        style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
-      ),
+      title: Text(item.title,
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500)),
       subtitle: Text(
         [item.authors, if (item.year != null) item.year!]
             .where((s) => s.isNotEmpty)
@@ -500,6 +479,62 @@ class LibraryTabState extends State<LibraryTab>
         style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
       ),
       trailing: trailing,
+    );
+  }
+}
+
+// ─── Toggle tab button ────────────────────────────────────────────────────────
+
+class _SectionTab extends StatelessWidget {
+  const _SectionTab({
+    required this.label,
+    required this.icon,
+    required this.selected,
+    required this.primaryColor,
+    required this.onTap,
+  });
+
+  final String label;
+  final IconData icon;
+  final bool selected;
+  final Color primaryColor;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: const BorderRadius.vertical(top: Radius.circular(6)),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 150),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+        decoration: BoxDecoration(
+          border: Border(
+            bottom: BorderSide(
+              color: selected ? primaryColor : Colors.transparent,
+              width: 2,
+            ),
+          ),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon,
+                size: 14,
+                color: selected ? primaryColor : Colors.grey.shade500),
+            const SizedBox(width: 5),
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight:
+                    selected ? FontWeight.w600 : FontWeight.normal,
+                color: selected ? primaryColor : Colors.grey.shade600,
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

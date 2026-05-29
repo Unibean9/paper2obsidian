@@ -779,6 +779,7 @@ class _MainScreenState extends State<MainScreen> {
       paperCitations = meta.citations;
       _paperAbstract = meta.abstract;
       _isFromZotero = meta.zoteroItemKey != null;
+      _pendingZoteroItemKey = meta.zoteroItemKey;
       if (meta.fullPdfText.isNotEmpty) fullPdfText = meta.fullPdfText;
       if (meta.resolvedPdf != null) selectedPdf = meta.resolvedPdf;
     });

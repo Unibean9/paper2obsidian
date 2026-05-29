@@ -354,6 +354,10 @@ class PaperController {
         ? meta.abstract
         : '*Abstract not available*';
 
+    final String zoteroKeyLine = meta.zoteroItemKey != null
+        ? '\nzotero_item_key: "${meta.zoteroItemKey}"'
+        : '';
+
     final String markdownContent =
         '''---
 title: "${meta.title.replaceAll('"', '\\"')}"
@@ -361,7 +365,7 @@ authors:${formatYamlList(meta.authors, "Authors")}
 venue: "[[Venues/${meta.venue}]]"
 year: "[[Years/${meta.year}]]"
 doi: "${meta.doi}"
-keywords:${formatYamlList(meta.keywords, "Tags")}
+keywords:${formatYamlList(meta.keywords, "Tags")}$zoteroKeyLine
 ---
 # ${meta.title}
 
@@ -682,6 +686,10 @@ ${meta.summary}
     ).firstMatch(yamlBlock);
     final String doi = doiMatch?.group(1) ?? '';
 
+    final String? zoteroItemKey = RegExp(
+      r'zotero_item_key:\s*"(.*?)"',
+    ).firstMatch(yamlBlock)?.group(1);
+
     final RegExpMatch? yearMatch = RegExp(
       r'year:\s*"\[\[Years/(.*?)\]\]"',
     ).firstMatch(yamlBlock);
@@ -735,6 +743,7 @@ ${meta.summary}
       summary: summary,
       fullPdfText: fullPdfText,
       resolvedPdf: pdfFile,
+      zoteroItemKey: zoteroItemKey,
     );
   }
 

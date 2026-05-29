@@ -384,12 +384,9 @@ class ZoteroService {
     late http.Response response;
     try {
       response = await _client
-          .put(
+          .post(
             Uri.parse(s3Url),
-            headers: {
-              'Content-Type': contentType,
-              'Content-Length': body.length.toString(),
-            },
+            headers: {'Content-Type': contentType},
             body: body,
           )
           .timeout(const Duration(minutes: 10));

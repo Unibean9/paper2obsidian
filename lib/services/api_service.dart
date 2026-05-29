@@ -6,8 +6,6 @@ import 'package:xml/xml.dart' as xml;
 import 'bedrock_client.dart';
 import 'logger_service.dart';
 
-/// ResearchApiService handles external API integrations for research document processing.
-/// Supports: Grobid (PDF structure), OpenAlex (metadata), AWS Bedrock (summary & RAG chat).
 class ResearchApiService {
   final String grobidUrl;
   final BedrockClient bedrockClient;
@@ -19,9 +17,6 @@ class ResearchApiService {
     http.Client? httpClient,
   }) : httpClient = httpClient ?? http.Client();
 
-  /// Sends PDF to Grobid server and returns structured TEI XML
-  /// Returns XML string containing metadata like title, authors, abstract
-  /// Throws exception if Grobid service unavailable or processing fails
   Future<String> processPdfWithGrobid(File pdfFile) async {
     try {
       final request = http.MultipartRequest(
@@ -81,7 +76,6 @@ class ResearchApiService {
     }
   }
 
-  /// Fetches metadata from OpenAlex API.
   Future<Map<String, dynamic>> fetchOpenAlexMetadata(String title) async {
     if (title.trim().isEmpty) {
       return {};
@@ -162,7 +156,6 @@ class ResearchApiService {
     }
   }
 
-  /// AWS Bedrock for summarization, metadata extraction, and RAG chat.
   static String _limitText(String text, int maxChars) {
     if (text.length <= maxChars) return text;
     return '${text.substring(0, maxChars)}...';
@@ -184,7 +177,6 @@ class ResearchApiService {
     }
   }
 
-  /// Extracts structured metadata + summary from paper text (Step 4 pipeline).
   Future<({String summary, Map<String, dynamic> extraData})>
   extractPaperMetadataWithBedrock(
     String pdfText, {
@@ -222,7 +214,6 @@ class ResearchApiService {
     }
   }
 
-  /// Generates a concise paper summary using AWS Bedrock.
   Future<String> generateSummaryWithBedrock(
     String pdfText, {
     double temperature = 0.3,
@@ -252,7 +243,6 @@ class ResearchApiService {
     }
   }
 
-  /// Chat with paper context using AWS Bedrock (RAG-style).
   Future<String> chatWithPaperContext(
     String userQuestion,
     String pdfContext, {

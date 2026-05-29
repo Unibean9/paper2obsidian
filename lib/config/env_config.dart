@@ -4,7 +4,6 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:path/path.dart' as p;
 
-/// Loads AWS/Bedrock config from bundled `.env` asset (see pubspec.yaml).
 class EnvConfig {
   EnvConfig._();
 
@@ -20,13 +19,11 @@ class EnvConfig {
       (_values['AWS_ACCESS_KEY_ID'] ?? '').isNotEmpty &&
       (_values['AWS_SECRET_ACCESS_KEY'] ?? '').isNotEmpty;
 
-  /// Call once at startup. Never throws.
   static Future<void> load() async {
     if (_loaded) return;
     _values.clear();
     _loadedFrom = null;
 
-    /// Try loading from bundled asset (primary source).
     try {
       final content = await rootBundle.loadString(assetPath);
       _parse(content);
@@ -39,7 +36,6 @@ class EnvConfig {
       }
     }
 
-    /// Try loading from project-root `.env` file (fallback for development).
     if (!hasAwsCredentials && !kIsWeb) {
       final projectFile = await _findProjectEnvFile();
       if (projectFile != null) {

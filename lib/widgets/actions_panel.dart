@@ -5,16 +5,6 @@ import 'package:flutter/material.dart';
 import '../models/paper_metadata.dart';
 import 'panel_container.dart';
 
-/// Column 1 — Actions panel: PDF picker, extraction progress log, and Save button.
-///
-/// Renders different action buttons based on [paperStatus]:
-/// - [PaperStatus.idle]       → "Select Paper" only
-/// - [PaperStatus.uploaded]   → "Extract Paper" (primary) + "Discard" (text)
-/// - [PaperStatus.extracting] → spinner, progress log, Cancel button
-/// - [PaperStatus.done]       → "Save to Obsidian" enabled
-/// - [PaperStatus.error]      → "Extract Paper" retry + "Discard"
-///
-/// [isLoading] covers the Save-to-Obsidian async operation only, not extraction.
 class ActionsPanel extends StatefulWidget {
   const ActionsPanel({
     super.key,
@@ -32,10 +22,8 @@ class ActionsPanel extends StatefulWidget {
     required this.onCancel,
   });
 
-  /// Current paper workflow status (drives conditional button rendering).
   final PaperStatus paperStatus;
 
-  /// True only during the Save-to-Obsidian async operation (not extraction).
   final bool isLoading;
   final String vaultPath;
   final File? selectedPdf;
@@ -44,10 +32,8 @@ class ActionsPanel extends StatefulWidget {
   final Color primaryColor;
   final VoidCallback onPickPdf;
 
-  /// Triggered when the user clicks "Extract Paper" after staging a file.
   final VoidCallback onExtract;
 
-  /// Triggered when the user clicks "Discard" to remove the staged file.
   final VoidCallback onDiscard;
   final VoidCallback onSaveToObsidian;
   final VoidCallback onCancel;
@@ -145,7 +131,11 @@ class _ActionsPanelState extends State<ActionsPanel> {
             const SizedBox(height: 8),
             TextButton.icon(
               onPressed: widget.onDiscard,
-              icon: Icon(Icons.delete_outline, color: Colors.red.shade400, size: 18),
+              icon: Icon(
+                Icons.delete_outline,
+                color: Colors.red.shade400,
+                size: 18,
+              ),
               label: Text(
                 'Discard',
                 style: TextStyle(color: Colors.red.shade400),
@@ -234,18 +224,16 @@ class _ActionsPanelState extends State<ActionsPanel> {
                     LinearProgressIndicator(
                       borderRadius: BorderRadius.circular(4),
                       color: widget.primaryColor,
-                      backgroundColor:
-                          widget.primaryColor.withValues(alpha: 0.1),
+                      backgroundColor: widget.primaryColor.withValues(
+                        alpha: 0.1,
+                      ),
                     ),
                     const SizedBox(height: 12),
                     SizedBox(
                       width: double.infinity,
                       child: OutlinedButton.icon(
                         onPressed: widget.onCancel,
-                        icon: const Icon(
-                          Icons.stop_circle_outlined,
-                          size: 18,
-                        ),
+                        icon: const Icon(Icons.stop_circle_outlined, size: 18),
                         label: const Text('Cancel'),
                         style: OutlinedButton.styleFrom(
                           foregroundColor: Colors.red.shade500,
@@ -261,8 +249,9 @@ class _ActionsPanelState extends State<ActionsPanel> {
                     LinearProgressIndicator(
                       borderRadius: BorderRadius.circular(4),
                       color: widget.primaryColor,
-                      backgroundColor:
-                          widget.primaryColor.withValues(alpha: 0.1),
+                      backgroundColor: widget.primaryColor.withValues(
+                        alpha: 0.1,
+                      ),
                     ),
                   ],
                 ],
@@ -273,7 +262,8 @@ class _ActionsPanelState extends State<ActionsPanel> {
 
           // ── Save to Obsidian button — only enabled when done and not saving
           FilledButton.icon(
-            onPressed: (!isDone || widget.isLoading || widget.vaultPath.trim().isEmpty)
+            onPressed:
+                (!isDone || widget.isLoading || widget.vaultPath.trim().isEmpty)
                 ? null
                 : widget.onSaveToObsidian,
             icon: const Icon(Icons.save_alt),

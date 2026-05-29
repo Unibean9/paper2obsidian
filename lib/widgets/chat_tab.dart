@@ -37,8 +37,6 @@ class ChatTab extends StatefulWidget {
 }
 
 class _ChatTabState extends State<ChatTab> with AutomaticKeepAliveClientMixin {
-  // Keep state alive when switching tabs so cleared messages are not restored
-  // from initialMessages by a fresh initState call.
   @override
   bool get wantKeepAlive => true;
   final ScrollController _scrollCtrl = ScrollController();
@@ -55,11 +53,8 @@ class _ChatTabState extends State<ChatTab> with AutomaticKeepAliveClientMixin {
   @override
   void initState() {
     super.initState();
-    // Seed from parent-provided history (copy to avoid aliasing).
     _messages = List.from(widget.initialMessages);
-    // Load available indexed papers for the scope selector.
     _availablePapers = widget.vaultIndexService.getIndexedPaperTitles();
-    // Load persisted language preference; default 'en' used until loaded.
     SharedPreferences.getInstance().then((prefs) {
       if (!mounted) return;
       setState(() {
@@ -246,7 +241,9 @@ class _ChatTabState extends State<ChatTab> with AutomaticKeepAliveClientMixin {
       ),
       builder: (ctx) => _PaperScopeSheet(
         availablePapers: _availablePapers,
-        selectedPapers: _selectedPapers.isEmpty ? _availablePapers : _selectedPapers,
+        selectedPapers: _selectedPapers.isEmpty
+            ? _availablePapers
+            : _selectedPapers,
         onChanged: (selected) {
           setState(() => _selectedPapers = selected);
           Navigator.of(ctx).pop();
@@ -306,7 +303,7 @@ class _ChatTabState extends State<ChatTab> with AutomaticKeepAliveClientMixin {
 
   @override
   Widget build(BuildContext context) {
-    super.build(context); // required by AutomaticKeepAliveClientMixin
+    super.build(context);
     return Column(
       children: [
         if (widget.showStaleBanner)

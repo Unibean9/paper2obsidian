@@ -2,10 +2,6 @@ import 'package:flutter/material.dart';
 
 import '../constants/messages.dart';
 
-/// Tab 4 — Vault Library: shows all saved paper notes from the Obsidian vault.
-/// Owns its loading state and paper list (Bucket C).
-/// Exposes a public [refresh] method so the parent screen can trigger a reload
-/// via GlobalKey after "Save to Obsidian" completes.
 class LibraryTab extends StatefulWidget {
   const LibraryTab({
     super.key,
@@ -17,10 +13,8 @@ class LibraryTab extends StatefulWidget {
 
   final String vaultPath;
 
-  /// Called when the user taps a paper in the list. Receives the .md file path.
   final Future<void> Function(String mdPath) onOpenPaper;
 
-  /// Async function that loads the list of papers. Returns [] if vaultPath is empty.
   final Future<List<Map<String, String>>> Function() loadLibrary;
 
   final Color primaryColor;
@@ -29,8 +23,6 @@ class LibraryTab extends StatefulWidget {
   State<LibraryTab> createState() => LibraryTabState();
 }
 
-/// Public state class — exposed so the parent screen can call [refresh]
-/// via a [GlobalKey<LibraryTabState>] after "Save to Obsidian" completes.
 class LibraryTabState extends State<LibraryTab> {
   List<Map<String, String>> _papers = [];
   bool _isLoading = false;
@@ -50,7 +42,6 @@ class LibraryTabState extends State<LibraryTab> {
     }
   }
 
-  /// Called externally via GlobalKey after a successful save to Obsidian.
   void refresh() => _refresh();
 
   Future<void> _refresh() async {

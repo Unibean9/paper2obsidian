@@ -1,8 +1,5 @@
 import 'package:flutter/material.dart';
 
-/// Tab 1 — Metadata form with 10 editable fields.
-/// All TextEditingControllers are owned by the parent screen (_MainScreenState)
-/// and passed by reference. This widget must NOT dispose them.
 class MetadataTab extends StatelessWidget {
   const MetadataTab({
     super.key,

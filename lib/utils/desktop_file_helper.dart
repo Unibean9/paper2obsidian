@@ -3,7 +3,6 @@ import 'dart:io';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 
-/// Resolves a picked file to a readable [File] on desktop and mobile.
 Future<File?> resolvePickedFile(PlatformFile picked) async {
   final path = picked.path;
   if (path != null && path.isNotEmpty) {

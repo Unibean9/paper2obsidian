@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 
-/// Tab 3 — Displays the list of citations extracted from the paper by Grobid.
 class CitationsTab extends StatelessWidget {
   const CitationsTab({
     super.key,

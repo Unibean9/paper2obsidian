@@ -12,10 +12,6 @@ import '../services/logger_service.dart';
 import '../services/vault_index_service.dart';
 import '../utils/title_inference.dart';
 
-/// Plain Dart class that owns all business logic for the paper processing pipeline.
-/// Does NOT import any Flutter widgets or call setState.
-/// All methods return `Future<PaperMetadata>` or `Future<T>` — the screen calls
-/// setState after each await.
 class PaperController {
   PaperController({
     required this.apiService,
@@ -26,29 +22,16 @@ class PaperController {
 
   final ResearchApiService apiService;
 
-  /// Callback for progress log messages — called during async pipelines.
   final void Function(String message) onLog;
 
-  /// Optional vault index service — when set, triggers background indexing after save.
   final VaultIndexService? vaultIndexService;
 
-  /// Called with a status string when background indexing starts, and with
-  /// `null` when it completes (or fails) — used to drive a progress indicator.
   final void Function(String? message)? onIndexingStatus;
 
-  /// Cooperative cancellation flag — set to true by cancel(), checked by async pipelines.
   bool isCancelled = false;
 
-  // TODO: _client is preserved from the original but is never assigned during API calls —
-  // _client?.close() in cancel() is currently dead code. Not fixed in this refactor.
   http.Client? _client;
 
-  // =========================================================================
-  // CANCEL
-  // =========================================================================
-
-  /// Stops the processing pipeline. The screen is responsible for resetting
-  /// isLoading and statusText in its own onCancel handler.
   void cancel() {
     isCancelled = true;
     if (_client != null) {
@@ -57,25 +40,18 @@ class PaperController {
     }
   }
 
-  // =========================================================================
-  // PDF PROCESSING PIPELINE
-  // =========================================================================
-
-  /// Step 1: Reads the PDF, extracts text, then runs the full pipeline.
-  /// Returns PaperMetadata with fullPdfText and resolvedPdf set.
   Future<PaperMetadata> processPdf(File pdf) async {
     isCancelled = false;
     onLog(AppMessages.get(MessageKey.statusStep1Extracting));
 
-    final PdfDocument document = PdfDocument(
-      inputBytes: pdf.readAsBytesSync(),
-    );
+    final PdfDocument document = PdfDocument(inputBytes: pdf.readAsBytesSync());
     final String extractedTextPage0 = PdfTextExtractor(
       document,
     ).extractText(startPageIndex: 0, endPageIndex: 0);
 
-    final int maxPagesForContext =
-        document.pages.count > 10 ? 10 : document.pages.count;
+    final int maxPagesForContext = document.pages.count > 10
+        ? 10
+        : document.pages.count;
     final String fullPdfText = PdfTextExtractor(
       document,
     ).extractText(startPageIndex: 0, endPageIndex: maxPagesForContext - 1);
@@ -92,14 +68,11 @@ class PaperController {
     return meta;
   }
 
-  /// Steps 2–4: Grobid → OpenAlex → Bedrock.
-  /// Returns PaperMetadata with all fields populated.
   Future<PaperMetadata> _processWithGrobidAndOpenAlex({
     required File pdf,
     required String firstPageText,
     required String fullPdfText,
   }) async {
-    // --- STEP 2: GROBID ---
     onLog(AppMessages.get(MessageKey.statusStep2Grobid));
     Map<String, dynamic> grobidData = {};
 
@@ -109,8 +82,10 @@ class PaperController {
 
       final String foundTitle = grobidData['title'] ?? '';
       if (foundTitle.isNotEmpty) {
-        final int authorCount =
-            grobidData['authors'].toString().split(';').length;
+        final int authorCount = grobidData['authors']
+            .toString()
+            .split(';')
+            .length;
         onLog(AppMessages.statusGrobidSuccess(authorCount));
       } else {
         onLog(AppMessages.get(MessageKey.statusGrobidNoTitle));
@@ -138,7 +113,6 @@ class PaperController {
 
     if (isCancelled) return PaperMetadata.empty();
 
-    // --- STEP 3: OPENALEX ---
     onLog(AppMessages.get(MessageKey.statusStep3OpenAlex));
     Map<String, dynamic> openalexData = {};
     if (searchTitle.isNotEmpty &&
@@ -149,9 +123,7 @@ class PaperController {
             (openalexData['doi']?.toString() ?? '').isNotEmpty &&
             openalexData['doi'] != 'Not Given') {
           onLog(
-            AppMessages.statusOpenAlexSuccess(
-              openalexData['doi'].toString(),
-            ),
+            AppMessages.statusOpenAlexSuccess(openalexData['doi'].toString()),
           );
         } else {
           onLog(AppMessages.get(MessageKey.statusOpenAlexNoMatch));
@@ -171,20 +143,19 @@ class PaperController {
 
     if (isCancelled) return PaperMetadata.empty();
 
-    // --- STEP 4: AWS BEDROCK ---
     onLog(AppMessages.get(MessageKey.statusStep4Bedrock));
     String summary = 'Not Given';
     Map<String, dynamic> extraData = {};
     try {
-      final result =
-          await apiService.extractPaperMetadataWithBedrock(fullPdfText);
+      final result = await apiService.extractPaperMetadataWithBedrock(
+        fullPdfText,
+      );
       summary = result.summary;
       extraData = result.extraData;
       onLog(AppMessages.statusBedrockSuccess());
 
       // Retry OpenAlex if Bedrock found a better title
-      final String bedrockTitle =
-          extraData['title']?.toString().trim() ?? '';
+      final String bedrockTitle = extraData['title']?.toString().trim() ?? '';
       if (openalexData.isEmpty &&
           bedrockTitle.isNotEmpty &&
           bedrockTitle != 'Not Given' &&
@@ -227,8 +198,6 @@ class PaperController {
     return meta;
   }
 
-  /// Merges data from all sources into a PaperMetadata object.
-  /// Priority: OpenAlex > Bedrock > Grobid > fallback.
   PaperMetadata _buildMetadata({
     required Map<String, dynamic> grobidData,
     required Map<String, dynamic> openalexData,
@@ -252,8 +221,7 @@ class PaperController {
         (grobidData['authors'] as String?) ??
         '';
 
-    final String venue =
-        (openalexData['venue'] as String?) ?? '';
+    final String venue = (openalexData['venue'] as String?) ?? '';
 
     final String year =
         (openalexData['year'] as String?) ??
@@ -311,11 +279,6 @@ class PaperController {
     );
   }
 
-  // =========================================================================
-  // AI CHAT
-  // =========================================================================
-
-  /// Sends a chat message and returns the assistant's response string.
   Future<String> sendChatMessage(String userText, String fullPdfText) async {
     final String response = await apiService.chatWithPaperContext(
       userText,
@@ -324,12 +287,6 @@ class PaperController {
     return response.isNotEmpty ? response : 'Sorry, no response.';
   }
 
-  // =========================================================================
-  // OBSIDIAN SAVE
-  // =========================================================================
-
-  /// Saves the paper metadata as a Markdown note and copies the PDF to the vault.
-  /// Throws on any file system error — the screen catches and shows the error.
   Future<void> saveToObsidian({
     required PaperMetadata meta,
     required String vaultPath,
@@ -377,19 +334,19 @@ class PaperController {
       await pdf.copy(destPdf.path);
     }
 
-    // Obsidian wiki-link for internal navigation.
     final String pdfLink = '[[Papers/$pdfFileName]]';
-    // file:// URI written into the markdown so openPaperFromLibrary can locate
-    // the PDF on disk. The regex in openPaperFromLibrary expects <file:///path>
-    // — this must stay in sync.
-    final String encodedPdfPath =
-        Uri.encodeFull(destPdf.path.replaceAll(r'\', '/'));
+
+    final String encodedPdfPath = Uri.encodeFull(
+      destPdf.path.replaceAll(r'\', '/'),
+    );
     final String pdfFileUri = '<file:///$encodedPdfPath>';
 
-    final String abstractText =
-        meta.abstract.isNotEmpty ? meta.abstract : '*Abstract not available*';
+    final String abstractText = meta.abstract.isNotEmpty
+        ? meta.abstract
+        : '*Abstract not available*';
 
-    final String markdownContent = '''---
+    final String markdownContent =
+        '''---
 title: "${meta.title.replaceAll('"', '\\"')}"
 authors:${formatYamlList(meta.authors, "Authors")}
 venue: "[[Venues/${meta.venue}]]"
@@ -435,8 +392,6 @@ ${meta.summary}
       await _createInternalNotes(meta.venue, 'Venues', vaultPath);
     }
 
-    // Background indexing — must NOT be awaited so the save returns immediately.
-    // Errors are non-fatal: log and clear the progress indicator.
     if (vaultIndexService != null) {
       onIndexingStatus?.call('Updating vault index…');
       // Safety timeout: always clear the indicator even if indexing hangs.
@@ -460,7 +415,6 @@ ${meta.summary}
     }
   }
 
-  /// Creates stub notes for linked items (Authors, Tags, Datasets, etc.)
   Future<void> _createInternalNotes(
     String input,
     String folderName,
@@ -470,12 +424,10 @@ ${meta.summary}
     try {
       final Directory directory = Directory(p.join(vaultPath, folderName));
       if (!await directory.exists()) await directory.create(recursive: true);
-      final List<String> items =
-          input.split(',').map((e) => e.trim()).toList();
+      final List<String> items = input.split(',').map((e) => e.trim()).toList();
       for (final String item in items) {
         if (item.isEmpty || item.toLowerCase() == 'not given') continue;
-        final String safeName =
-            item.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_');
+        final String safeName = item.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_');
         final File file = File(p.join(directory.path, '$safeName.md'));
         if (!await file.exists()) {
           await file.writeAsString(
@@ -492,12 +444,6 @@ ${meta.summary}
     }
   }
 
-  // =========================================================================
-  // VAULT LIBRARY
-  // =========================================================================
-
-  /// Returns a list of paper entries from the vault's Papers directory.
-  /// Each entry has keys: title, year, path.
   Future<List<Map<String, String>>> loadVaultLibrary(String vaultPath) async {
     if (vaultPath.isEmpty) return [];
 
@@ -513,8 +459,7 @@ ${meta.summary}
             String year = 'Not Given';
 
             // Parse year from YAML frontmatter using regex.
-            final RegExp yearRegex =
-                RegExp(r'year:\s*"\[\[Years\/(.*?)\]\]"');
+            final RegExp yearRegex = RegExp(r'year:\s*"\[\[Years\/(.*?)\]\]"');
             final RegExpMatch? match = yearRegex.firstMatch(content);
             if (match != null && match.groupCount >= 1) {
               year = match.group(1) ?? 'Not Given';
@@ -534,15 +479,10 @@ ${meta.summary}
     return papers;
   }
 
-  /// Opens a paper from the library by reading its Markdown file,
-  /// locating the original PDF, and extracting text for AI chat.
-  /// Returns PaperMetadata with resolvedPdf and fullPdfText set.
   Future<PaperMetadata> openPaperFromLibrary(String mdPath) async {
     final File mdFile = File(mdPath);
     final String content = await mdFile.readAsString();
 
-    // Extract original PDF path from the Markdown file.
-    // Expected format: **Source PDF:** [Open Paper](<file:///D:/path/file.pdf>)
     final RegExp pdfPathRegex = RegExp(r'\<file:\/\/\/(.*?)\>');
     final RegExpMatch? match = pdfPathRegex.firstMatch(content);
 
@@ -551,7 +491,7 @@ ${meta.summary}
     }
 
     String decodedPdfPath = Uri.decodeFull(match.group(1)!);
-    // Restore Windows backslashes if needed.
+
     if (Platform.isWindows) {
       decodedPdfPath = decodedPdfPath.replaceAll('/', '\\');
     }
@@ -563,80 +503,68 @@ ${meta.summary}
 
     onLog(AppMessages.statusPdfFound(p.basename(pdfFile.path)));
 
-    // Re-extract text for Chat RAG context.
-    // Use async read to avoid blocking the Flutter UI thread (fix: was readAsBytesSync).
     final PdfDocument document = PdfDocument(
       inputBytes: await pdfFile.readAsBytes(),
     );
-    final int maxPages =
-        document.pages.count > 10 ? 10 : document.pages.count;
+    final int maxPages = document.pages.count > 10 ? 10 : document.pages.count;
     final String fullPdfText = PdfTextExtractor(
       document,
     ).extractText(startPageIndex: 0, endPageIndex: maxPages - 1);
     document.dispose();
 
-    // ── Locate YAML frontmatter block (CRLF-safe) ────────────────────────────
-    //
-    // Standard YAML frontmatter: opening `---` on line 1, closing `---` on its
-    // own line. On Windows, VS Code and git (autocrlf=true) write CRLF endings,
-    // so the closing fence may be `\r\n---\r\n` instead of `\n---\n`.
-    // Search for the closing fence starting after the opening `---` (offset 3).
-    final RegExpMatch? closeFenceMatch =
-        RegExp(r'(?:\r?\n)---(?:\r?\n|$)').firstMatch(content.substring(3));
-    final int yamlEnd =
-        closeFenceMatch != null ? closeFenceMatch.start + 3 : -1;
-    final String yamlBlock =
-        yamlEnd > 0 ? content.substring(0, yamlEnd) : content;
+    final RegExpMatch? closeFenceMatch = RegExp(
+      r'(?:\r?\n)---(?:\r?\n|$)',
+    ).firstMatch(content.substring(3));
+    final int yamlEnd = closeFenceMatch != null
+        ? closeFenceMatch.start + 3
+        : -1;
+    final String yamlBlock = yamlEnd > 0
+        ? content.substring(0, yamlEnd)
+        : content;
 
-    // ── Parse YAML frontmatter fields (all scoped to yamlBlock) ──────────────
-
-    final RegExpMatch? doiMatch =
-        RegExp(r'doi:\s*"(.*?)"').firstMatch(yamlBlock);
+    final RegExpMatch? doiMatch = RegExp(
+      r'doi:\s*"(.*?)"',
+    ).firstMatch(yamlBlock);
     final String doi = doiMatch?.group(1) ?? '';
 
-    // year: "[[Years/YYYY]]"
-    final RegExpMatch? yearMatch =
-        RegExp(r'year:\s*"\[\[Years/(.*?)\]\]"').firstMatch(yamlBlock);
+    final RegExpMatch? yearMatch = RegExp(
+      r'year:\s*"\[\[Years/(.*?)\]\]"',
+    ).firstMatch(yamlBlock);
     final String year = yearMatch?.group(1) ?? '';
 
-    // venue: "[[Venues/NAME]]"
-    final RegExpMatch? venueMatch =
-        RegExp(r'venue:\s*"\[\[Venues/(.*?)\]\]"').firstMatch(yamlBlock);
+    final RegExpMatch? venueMatch = RegExp(
+      r'venue:\s*"\[\[Venues/(.*?)\]\]"',
+    ).firstMatch(yamlBlock);
     final String venue = venueMatch?.group(1) ?? '';
 
-    // authors YAML list:  - "[[Authors/Name]]"  (one per line, frontmatter only)
-    final List<String> authorList = RegExp(r'"?\[\[Authors/(.*?)\]\]"?')
-        .allMatches(yamlBlock)
-        .map((m) => m.group(1)!)
-        .toList();
+    final List<String> authorList = RegExp(
+      r'"?\[\[Authors/(.*?)\]\]"?',
+    ).allMatches(yamlBlock).map((m) => m.group(1)!).toList();
     final String authors = authorList.join(', ');
 
-    // keywords YAML list: - "[[Tags/kw]]"  (frontmatter only)
-    final List<String> keywordList = RegExp(r'"?\[\[Tags/(.*?)\]\]"?')
-        .allMatches(yamlBlock)
-        .map((m) => m.group(1)!)
-        .toList();
+    final List<String> keywordList = RegExp(
+      r'"?\[\[Tags/(.*?)\]\]"?',
+    ).allMatches(yamlBlock).map((m) => m.group(1)!).toList();
     final String keywords = keywordList.join(', ');
 
-    // ── Parse body sections ───────────────────────────────────────────────────
-
-    final RegExpMatch? summaryMatch =
-        RegExp(r'## 1\. Summary\n([\s\S]*?)\n## 2\.').firstMatch(content);
+    final RegExpMatch? summaryMatch = RegExp(
+      r'## 1\. Summary\n([\s\S]*?)\n## 2\.',
+    ).firstMatch(content);
     final String summary = summaryMatch?.group(1)?.trim() ?? '';
 
-    // **Problem Statement:** value (single line)
-    final RegExpMatch? problemMatch =
-        RegExp(r'\*\*Problem Statement:\*\*\s*(.+)').firstMatch(content);
+    final RegExpMatch? problemMatch = RegExp(
+      r'\*\*Problem Statement:\*\*\s*(.+)',
+    ).firstMatch(content);
     final String problemStatement = problemMatch?.group(1)?.trim() ?? '';
 
-    // **Dataset Detail:** value (single line) — original field name in template
-    final RegExpMatch? datasetMatch =
-        RegExp(r'\*\*Dataset Detail:\*\*\s*(.+)').firstMatch(content);
+    final RegExpMatch? datasetMatch = RegExp(
+      r'\*\*Dataset Detail:\*\*\s*(.+)',
+    ).firstMatch(content);
     final String dataset = datasetMatch?.group(1)?.trim() ?? '';
 
-    // **Limitations:** value (single line)
-    final RegExpMatch? limitationMatch =
-        RegExp(r'\*\*Limitations:\*\*\s*(.+)').firstMatch(content);
+    final RegExpMatch? limitationMatch = RegExp(
+      r'\*\*Limitations:\*\*\s*(.+)',
+    ).firstMatch(content);
     final String limitation = limitationMatch?.group(1)?.trim() ?? '';
 
     return PaperMetadata(

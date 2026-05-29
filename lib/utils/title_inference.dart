@@ -1,8 +1,6 @@
-/// Heuristics when Grobid cannot extract a clean title.
 class TitleInference {
   TitleInference._();
 
-  /// True if title looks like a download filename, not a real paper title.
   static bool looksLikeFilename(String title) {
     final t = title.trim();
     if (t.length < 8) return true;
@@ -14,10 +12,8 @@ class TitleInference {
     return false;
   }
 
-  /// Clean a PDF filename into a readable title guess.
   static String cleanFilename(String filenameWithoutExt) {
     var t = filenameWithoutExt.trim();
-    // Drop leading hash/id prefixes: 69fe2a55..._Real-Title
     t = t.replaceFirst(RegExp(r'^[a-f0-9]{8,}[_-]+', caseSensitive: false), '');
     t = t.replaceAll(RegExp(r'[_]+'), ' ');
     t = t.replaceAll(RegExp(r'\s*\(\d+\)\s*$'), '');
@@ -28,7 +24,6 @@ class TitleInference {
     return t;
   }
 
-  /// First plausible title line from page-one text.
   static String? fromFirstPage(String pageText) {
     final lines = pageText.split('\n');
     for (final raw in lines) {
@@ -64,7 +59,6 @@ class TitleInference {
     return false;
   }
 
-  /// Best title for OpenAlex search: Grobid → first page → cleaned filename.
   static String resolve({
     required String grobidTitle,
     required String firstPageText,

@@ -1,5 +1,3 @@
-/// Centralized user-facing message keys.
-/// All strings are English-only for consistent UX and i18n readiness.
 enum MessageKey {
   // --- Status: PDF processing pipeline ---
   statusStep1Extracting,
@@ -53,15 +51,12 @@ enum MessageKey {
   labelSavedNotes,
 }
 
-/// All non-interpolated user-facing strings.
-/// Use [AppMessages.get] to retrieve. For dynamic strings, use the static methods.
 class AppMessages {
   AppMessages._();
 
   static const Map<MessageKey, String> _map = {
     // Processing pipeline status
-    MessageKey.statusStep1Extracting:
-        '⏳ Step 1/4: Extracting text from PDF...',
+    MessageKey.statusStep1Extracting: '⏳ Step 1/4: Extracting text from PDF...',
     MessageKey.statusStep2Grobid:
         '⏳ Step 2/4: Parsing structure with Grobid...',
     MessageKey.statusStep3OpenAlex:
@@ -132,12 +127,7 @@ class AppMessages {
     MessageKey.labelSavedNotes: 'Saved Notes',
   };
 
-  /// Returns the message string for [key]. Throws if key is missing.
   static String get(MessageKey key) => _map[key]!;
-
-  // ---------------------------------------------------------------------------
-  // Interpolated message helpers — for strings with dynamic content.
-  // ---------------------------------------------------------------------------
 
   static String statusTextExtracted(int chars) =>
       '✅ Text extracted ($chars chars).';
@@ -157,8 +147,7 @@ class AppMessages {
   static String statusBedrockSuccess() =>
       '✅ Bedrock success: Extracted extra details.';
 
-  static String statusBedrockError(Object error) =>
-      '⚠️ Bedrock error: $error';
+  static String statusBedrockError(Object error) => '⚠️ Bedrock error: $error';
 
   static String statusPdfFound(String filename) => '✅ PDF found: $filename';
 

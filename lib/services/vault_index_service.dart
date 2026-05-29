@@ -8,11 +8,6 @@ import '../services/bedrock_client.dart';
 import '../services/logger_service.dart';
 import '../utils/math_utils.dart';
 
-// ---------------------------------------------------------------------------
-// Public data models
-// ---------------------------------------------------------------------------
-
-/// A single text chunk extracted from a paper note, with its embedding.
 class ChunkRecord {
   const ChunkRecord({
     required this.id,
@@ -29,12 +24,12 @@ class ChunkRecord {
   final List<double> embedding;
 
   Map<String, dynamic> toJson() => {
-        'id': id,
-        'paperTitle': paperTitle,
-        'section': section,
-        'text': text,
-        'embedding': embedding,
-      };
+    'id': id,
+    'paperTitle': paperTitle,
+    'section': section,
+    'text': text,
+    'embedding': embedding,
+  };
 
   factory ChunkRecord.fromJson(Map<String, dynamic> json) {
     final raw = (json['embedding'] as List<dynamic>)
@@ -57,10 +52,6 @@ class ChunkRecord {
   }
 }
 
-/// Return type for [VaultIndexService.query].
-///
-/// [usedFallback] is `true` when BM25 keyword search was used instead of
-/// Bedrock semantic search (AWS credentials are absent or unconfigured).
 class QueryResult {
   const QueryResult({required this.chunks, required this.usedFallback});
 
@@ -68,15 +59,6 @@ class QueryResult {
   final bool usedFallback;
 }
 
-// ---------------------------------------------------------------------------
-// VaultIndexService
-// ---------------------------------------------------------------------------
-
-/// Manages the vault's semantic search index.
-///
-/// Call [loadIndex] once at app start after the vault path is confirmed.
-/// Call [indexVault] to rebuild the full index; [indexPaper] for incremental.
-/// Call [query] to retrieve top-k relevant chunks by semantic or BM25 search.
 class VaultIndexService {
   VaultIndexService({required this.bedrockClient});
 
@@ -89,33 +71,20 @@ class VaultIndexService {
   int _paperCount = 0;
   bool _indexingInProgress = false;
 
-  // ─── Path helpers ──────────────────────────────────────────────────────────
-
   static String _indexDir(String vaultPath) =>
       p.join(vaultPath, '.paper2obsidian');
 
   static String _indexPath(String vaultPath) =>
       p.join(_indexDir(vaultPath), 'vault_index.json');
 
-  // ─── Public status ─────────────────────────────────────────────────────────
-
   bool indexExists(String vaultPath) =>
       File(_indexPath(vaultPath)).existsSync();
 
-  /// Number of distinct papers currently loaded in memory.
   int loadedPaperCount() => _paperCount;
 
-  /// Returns distinct paper titles currently loaded in memory, sorted
-  /// alphabetically. Used by the paper scope selector in ChatTab.
   List<String> getIndexedPaperTitles() =>
       (_chunks.map((c) => c.paperTitle).toSet().toList()..sort());
 
-  // ─── Load ──────────────────────────────────────────────────────────────────
-
-  /// Loads the persisted index into memory.
-  ///
-  /// No-ops if [vaultPath] is empty. Treats a missing, corrupt, or
-  /// dimension-mismatched index file as an absent index (safe empty state).
   Future<void> loadIndex(String vaultPath) async {
     if (vaultPath.trim().isEmpty) return;
 
@@ -151,13 +120,6 @@ class VaultIndexService {
     }
   }
 
-  // ─── Full vault index ──────────────────────────────────────────────────────
-
-  /// Indexes all `.md` papers in `{vaultPath}/Papers/`.
-  ///
-  /// Skips (with a log) if another indexing operation is in progress.
-  /// File reads are parallelised; embed calls are sequential (API rate limits).
-  /// Writes atomically then updates the vault `.gitignore` if needed.
   Future<void> indexVault(String vaultPath) =>
       _withMutex('indexVault', () => _indexVaultImpl(vaultPath));
 
@@ -177,10 +139,12 @@ class VaultIndexService {
 
     // Parallel file reads — embed calls stay sequential below.
     final fileContents = await Future.wait(
-      mdFiles.map((file) async => MapEntry(
-            p.basenameWithoutExtension(file.path),
-            await file.readAsString(),
-          )),
+      mdFiles.map(
+        (file) async => MapEntry(
+          p.basenameWithoutExtension(file.path),
+          await file.readAsString(),
+        ),
+      ),
     );
 
     final List<ChunkRecord> allChunks = [];
@@ -194,18 +158,14 @@ class VaultIndexService {
     await _ensureVaultGitignore(vaultPath);
   }
 
-  // ─── Incremental index ─────────────────────────────────────────────────────
-
-  /// Incrementally re-indexes one paper after it has been saved to the vault.
-  ///
-  /// Replaces prior chunks for [meta.title] and re-saves the index.
-  /// Skips (with a log) if another indexing operation is in progress.
   Future<void> indexPaper(PaperMetadata meta, String vaultPath) =>
       _withMutex('indexPaper', () => _indexPaperImpl(meta, vaultPath));
 
   Future<void> _indexPaperImpl(PaperMetadata meta, String vaultPath) async {
-    final safeTitle =
-        meta.title.trim().replaceAll(RegExp(r'[\\/:*?"<>|]'), '_');
+    final safeTitle = meta.title.trim().replaceAll(
+      RegExp(r'[\\/:*?"<>|]'),
+      '_',
+    );
     final mdFile = File(p.join(vaultPath, 'Papers', '$safeTitle.md'));
     if (!await mdFile.exists()) {
       AppLogger.log(
@@ -229,16 +189,6 @@ class VaultIndexService {
     );
   }
 
-  // ─── Query ─────────────────────────────────────────────────────────────────
-
-  /// Returns the top-[topK] most relevant [ChunkRecord]s for [question].
-  ///
-  /// Semantic (cosine) search when AWS is configured;
-  /// BM25 fallback when [BedrockUnconfiguredException] is thrown.
-  /// Returns an empty result — never throws — when the index has no chunks.
-  ///
-  /// [paperFilter]: when non-empty, only chunks whose [ChunkRecord.paperTitle]
-  /// is in this list are considered. Pass null (default) to search all papers.
   Future<QueryResult> query(
     String question, {
     int topK = 5,
@@ -258,25 +208,22 @@ class VaultIndexService {
       final scopedChunks = (paperFilter != null && paperFilter.isNotEmpty)
           ? _chunks.where((c) => paperFilter.contains(c.paperTitle)).toList()
           : _chunks;
-      // Only cosine-score chunks that have a real embedding vector.
-      // BM25-only chunks (empty embedding) are excluded from the semantic path
+
       // but remain searchable via the BM25 fallback.
-      final embeddable =
-          scopedChunks.where((c) => c.embedding.isNotEmpty).toList();
+      final embeddable = scopedChunks
+          .where((c) => c.embedding.isNotEmpty)
+          .toList();
       if (embeddable.isEmpty) {
         return _bm25Query(question, topK: topK, paperFilter: paperFilter);
       }
-      final scored = embeddable
-          .map((c) => _Scored(dotProduct(queryVec, c.embedding), c))
-          .toList()
-        ..sort((a, b) => b.score.compareTo(a.score));
+      final scored =
+          embeddable
+              .map((c) => _Scored(dotProduct(queryVec, c.embedding), c))
+              .toList()
+            ..sort((a, b) => b.score.compareTo(a.score));
 
       final topChunks = scored.take(topK).toList();
-      _logQueryResult(
-        question: question,
-        mode: 'semantic',
-        scored: topChunks,
-      );
+      _logQueryResult(question: question, mode: 'semantic', scored: topChunks);
 
       return QueryResult(
         chunks: topChunks.map((s) => s.chunk).toList(),
@@ -286,8 +233,6 @@ class VaultIndexService {
       return _bm25Query(question, topK: topK, paperFilter: paperFilter);
     }
   }
-
-  // ─── BM25 fallback ─────────────────────────────────────────────────────────
 
   QueryResult _bm25Query(
     String question, {
@@ -304,33 +249,30 @@ class VaultIndexService {
     }
 
     final queryTerms = tokenize(question);
-    final scored = scopedChunks
-        .map((c) => _Scored(
-              bm25ScoreFromTokens(
-                queryTerms,
-                _tokenCache[c.id] ?? const [],
-                _idfCache,
-                _avgDocLen,
+    final scored =
+        scopedChunks
+            .map(
+              (c) => _Scored(
+                bm25ScoreFromTokens(
+                  queryTerms,
+                  _tokenCache[c.id] ?? const [],
+                  _idfCache,
+                  _avgDocLen,
+                ),
+                c,
               ),
-              c,
-            ))
-        .toList()
-      ..sort((a, b) => b.score.compareTo(a.score));
+            )
+            .toList()
+          ..sort((a, b) => b.score.compareTo(a.score));
 
     final topChunks = scored.take(topK).toList();
-    _logQueryResult(
-      question: question,
-      mode: 'bm25',
-      scored: topChunks,
-    );
+    _logQueryResult(question: question, mode: 'bm25', scored: topChunks);
 
     return QueryResult(
       chunks: topChunks.map((s) => s.chunk).toList(),
       usedFallback: true,
     );
   }
-
-  // ─── Chunking + embedding ──────────────────────────────────────────────────
 
   Future<List<ChunkRecord>> _chunkAndEmbed(
     String paperTitle,
@@ -350,13 +292,10 @@ class VaultIndexService {
         continue;
       }
 
-      // Always store the chunk so BM25 can search it.
-      // Embedding is optional — only needed for semantic (cosine) search.
       List<double> embedding = [];
       try {
         embedding = await bedrockClient.embed(section.text);
       } on BedrockUnconfiguredException {
-        // AWS not configured — store chunk with empty embedding; BM25 still works.
         AppLogger.log(
           'VaultIndexService: AWS unconfigured — storing "$paperTitle/'
           '${section.heading}" as BM25-only chunk',
@@ -369,27 +308,19 @@ class VaultIndexService {
           error: e,
         );
       }
-      records.add(ChunkRecord(
-        id: '${paperTitle}_${i}_${section.heading.hashCode.abs()}',
-        paperTitle: paperTitle,
-        section: section.heading,
-        text: section.text,
-        embedding: embedding,
-      ));
+      records.add(
+        ChunkRecord(
+          id: '${paperTitle}_${i}_${section.heading.hashCode.abs()}',
+          paperTitle: paperTitle,
+          section: section.heading,
+          text: section.text,
+          embedding: embedding,
+        ),
+      );
     }
     return records;
   }
 
-  // ─── Markdown section splitter ─────────────────────────────────────────────
-
-  // ─── Query logging ─────────────────────────────────────────────────────────
-
-  /// Logs retrieval diagnostics for a completed query.
-  ///
-  /// Signals to watch:
-  /// - `topScore < 0.30` (semantic) → query poorly matched vault content
-  /// - `topScore < 1.00` (bm25)     → keyword overlap is low
-  /// - `mode: bm25`                 → AWS credentials absent or embed failed
   void _logQueryResult({
     required String question,
     required String mode,
@@ -405,22 +336,25 @@ class VaultIndexService {
 
     final topScore = scored.first.score;
     final hits = scored
-        .map((s) => '${s.chunk.paperTitle.split(' ').first}/'
-            '${s.chunk.section} '
-            '(${s.score.toStringAsFixed(2)})')
+        .map(
+          (s) =>
+              '${s.chunk.paperTitle.split(' ').first}/'
+              '${s.chunk.section} '
+              '(${s.score.toStringAsFixed(2)})',
+        )
         .join(', ');
 
     final quality = mode == 'semantic'
         ? (topScore >= 0.70
-            ? '✓ strong'
-            : topScore >= 0.45
-                ? '~ moderate'
-                : '✗ weak — query may not match vault')
+              ? '✓ strong'
+              : topScore >= 0.45
+              ? '~ moderate'
+              : '✗ weak — query may not match vault')
         : (topScore >= 5.0
-            ? '✓ strong'
-            : topScore >= 1.0
-                ? '~ moderate'
-                : '✗ weak — few keyword matches');
+              ? '✓ strong'
+              : topScore >= 1.0
+              ? '~ moderate'
+              : '✗ weak — few keyword matches');
 
     AppLogger.log(
       'RAG [$mode] "${_truncate(question)}" → '
@@ -431,8 +365,6 @@ class VaultIndexService {
 
   static String _truncate(String s, [int max = 60]) =>
       s.length <= max ? s : '${s.substring(0, max)}…';
-
-  // ─── Markdown section splitter ─────────────────────────────────────────────
 
   List<_Section> _splitIntoSections(String content) {
     String body = content;
@@ -449,7 +381,8 @@ class VaultIndexService {
     for (final line in body.split('\n')) {
       final m = headingRe.firstMatch(line);
       if (m != null) {
-        if (lines.isNotEmpty) raw.add(_Section(heading, lines.join('\n').trim()));
+        if (lines.isNotEmpty)
+          raw.add(_Section(heading, lines.join('\n').trim()));
         heading = m.group(1)!.trim();
         lines.clear();
       } else {
@@ -471,16 +404,13 @@ class VaultIndexService {
     return merged;
   }
 
-  // ─── Cache management ──────────────────────────────────────────────────────
-
-  /// Recomputes all derived caches after `_chunks` changes.
   void _rebuildCaches() {
     _tokenCache = {for (final c in _chunks) c.id: tokenize(c.text)};
     _idfCache = computeIdfFromTokens(_tokenCache.values.toList());
     _avgDocLen = _chunks.isEmpty
         ? 0.0
         : _tokenCache.values.fold<int>(0, (s, t) => s + t.length) /
-            _chunks.length;
+              _chunks.length;
     _paperCount = _chunks.map((c) => c.paperTitle).toSet().length;
   }
 
@@ -491,8 +421,6 @@ class VaultIndexService {
     _avgDocLen = 0.0;
     _paperCount = 0;
   }
-
-  // ─── Mutex helper ──────────────────────────────────────────────────────────
 
   Future<void> _withMutex(String op, Future<void> Function() fn) async {
     if (_indexingInProgress) {
@@ -510,27 +438,23 @@ class VaultIndexService {
     }
   }
 
-  // ─── Atomic save ───────────────────────────────────────────────────────────
-
   Future<void> _saveIndex(String vaultPath, {required int paperCount}) async {
     final dir = Directory(_indexDir(vaultPath));
     if (!await dir.exists()) await dir.create(recursive: true);
 
     final indexPath = _indexPath(vaultPath);
     final tmp = File('$indexPath.tmp');
-    // Use 0 when all chunks are BM25-only (no embeddings) so loadIndex does
-    // not reject the file with a dimension-mismatch error on next startup.
     final hasSemantic = _chunks.any((c) => c.embedding.isNotEmpty);
-    await tmp.writeAsString(jsonEncode({
-      'version': 1,
-      'embeddingDimensions': hasSemantic ? 1024 : 0,
-      'paperCount': paperCount,
-      'chunks': _chunks.map((c) => c.toJson()).toList(),
-    }));
+    await tmp.writeAsString(
+      jsonEncode({
+        'version': 1,
+        'embeddingDimensions': hasSemantic ? 1024 : 0,
+        'paperCount': paperCount,
+        'chunks': _chunks.map((c) => c.toJson()).toList(),
+      }),
+    );
     await tmp.rename(indexPath);
   }
-
-  // ─── Vault .gitignore ──────────────────────────────────────────────────────
 
   Future<void> _ensureVaultGitignore(String vaultPath) async {
     try {
@@ -542,7 +466,8 @@ class VaultIndexService {
       if (content.contains(entry)) return;
 
       await file.writeAsString(
-          content.isEmpty ? '$entry\n' : '$content\n$entry\n');
+        content.isEmpty ? '$entry\n' : '$content\n$entry\n',
+      );
     } catch (e) {
       AppLogger.log(
         'VaultIndexService: failed to update vault .gitignore',

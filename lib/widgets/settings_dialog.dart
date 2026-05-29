@@ -4,25 +4,6 @@ import 'package:path/path.dart' as p;
 import '../utils/vault_access.dart';
 import '../utils/desktop_file_helper.dart';
 
-/// Settings dialog for configuring the Obsidian vault path.
-/// Extracted from `_showSettingsDialog` in the original main.dart.
-///
-/// Error messages are displayed as inline [Text] widgets inside the dialog body —
-/// NOT via ScaffoldMessenger, because the dialog's BuildContext has no Scaffold ancestor.
-///
-/// Usage:
-/// ```dart
-/// showDialog(
-///   context: context,
-///   builder: (_) => SettingsDialog(
-///     initialVaultPath: vaultPath,
-///     onSave: (newPath) async {
-///       setState(() => vaultPath = newPath);
-///       await _saveSettings();
-///     },
-///   ),
-/// );
-/// ```
 class SettingsDialog extends StatefulWidget {
   const SettingsDialog({
     super.key,
@@ -33,11 +14,8 @@ class SettingsDialog extends StatefulWidget {
 
   final String initialVaultPath;
 
-  /// Called with the validated new vault path when the user taps "Save Changes".
   final Future<void> Function(String newPath) onSave;
 
-  /// Called when the user taps "Re-index Vault". Returns the paper count on
-  /// success. Pass `null` to hide the button (e.g., when no vault is set).
   final Future<int> Function()? onReindex;
 
   @override
@@ -47,13 +25,9 @@ class SettingsDialog extends StatefulWidget {
 class _SettingsDialogState extends State<SettingsDialog> {
   late final TextEditingController _vaultCtrl;
 
-  /// Inline error message rendered below the vault path field.
-  /// Using inline Text instead of ScaffoldMessenger — the dialog context
-  /// has no Scaffold ancestor so SnackBars would throw.
   String? _errorMessage;
   bool _isSaving = false;
 
-  // Re-index state
   bool _isIndexing = false;
   String? _indexResult;
   String? _indexError;
@@ -100,7 +74,8 @@ class _SettingsDialogState extends State<SettingsDialog> {
     });
     try {
       final count = await widget.onReindex!();
-      if (mounted) setState(() => _indexResult = 'Vault indexed — $count papers');
+      if (mounted)
+        setState(() => _indexResult = 'Vault indexed — $count papers');
     } catch (e) {
       if (mounted) setState(() => _indexError = 'Re-index failed: $e');
     } finally {
@@ -188,7 +163,9 @@ class _SettingsDialogState extends State<SettingsDialog> {
                             ? const SizedBox(
                                 width: 16,
                                 height: 16,
-                                child: CircularProgressIndicator(strokeWidth: 2),
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
                               )
                             : const Icon(Icons.refresh, size: 18),
                         label: const Text('Re-index Vault'),
@@ -201,7 +178,10 @@ class _SettingsDialogState extends State<SettingsDialog> {
                     padding: const EdgeInsets.only(top: 6),
                     child: Text(
                       _indexResult!,
-                      style: TextStyle(fontSize: 12, color: Colors.green.shade700),
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Colors.green.shade700,
+                      ),
                     ),
                   ),
                 if (_indexError != null)
@@ -209,7 +189,10 @@ class _SettingsDialogState extends State<SettingsDialog> {
                     padding: const EdgeInsets.only(top: 6),
                     child: Text(
                       _indexError!,
-                      style: TextStyle(fontSize: 12, color: Colors.red.shade700),
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Colors.red.shade700,
+                      ),
                     ),
                   ),
               ],

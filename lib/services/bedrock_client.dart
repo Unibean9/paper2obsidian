@@ -6,11 +6,6 @@ import 'package:aws_signature_v4/aws_signature_v4.dart';
 import '../config/env_config.dart';
 import 'logger_service.dart';
 
-/// Thrown when [BedrockClient.embed] or [BedrockClient.converse] is called
-/// but AWS credentials are not configured.
-///
-/// [VaultIndexService] catches this typed exception to activate the BM25
-/// keyword-search fallback path (Phase 3).
 class BedrockUnconfiguredException implements Exception {
   const BedrockUnconfiguredException([
     this.message =
@@ -24,13 +19,6 @@ class BedrockUnconfiguredException implements Exception {
   String toString() => 'BedrockUnconfiguredException: $message';
 }
 
-// ---------------------------------------------------------------------------
-// Model descriptors — one per API type
-// ---------------------------------------------------------------------------
-
-/// Text generation model used by the Converse API (chat / RAG synthesis).
-///
-/// Env var: `BEDROCK_TEXT_MODEL_ID`. Default: Google Gemma 3 4b It.
 class BedrockTextModel {
   const BedrockTextModel({required this.modelId});
 
@@ -52,16 +40,11 @@ class BedrockTextModel {
   String toString() => 'BedrockTextModel($modelId)';
 }
 
-/// Embedding model used by the InvokeModel API (semantic search index).
-///
-/// Env var: `BEDROCK_EMBED_MODEL_ID`. Default: Titan Embeddings V2 (1024-dim).
 class BedrockEmbedModel {
   const BedrockEmbedModel({required this.modelId, this.dimensions = 1024});
 
   final String modelId;
 
-  /// Output vector dimensions — must match the index stored on disk.
-  /// Changing this requires a full vault re-index.
   final int dimensions;
 
   static const String _defaultModelId = 'amazon.titan-embed-text-v2:0';
@@ -80,13 +63,6 @@ class BedrockEmbedModel {
   String toString() => 'BedrockEmbedModel($modelId, ${dimensions}d)';
 }
 
-// ---------------------------------------------------------------------------
-// BedrockConfig — credentials + region shared by all models
-// ---------------------------------------------------------------------------
-
-/// AWS credentials and region, shared by [BedrockTextModel] and [BedrockEmbedModel].
-///
-/// Load once at startup via [BedrockConfig.fromEnvironment].
 class BedrockConfig {
   const BedrockConfig({
     required this.region,
@@ -99,10 +75,8 @@ class BedrockConfig {
 
   final String region;
 
-  /// Text generation model (Converse API).
   final BedrockTextModel textModel;
 
-  /// Embedding model (InvokeModel API).
   final BedrockEmbedModel embedModel;
 
   final String accessKeyId;
@@ -116,10 +90,6 @@ class BedrockConfig {
       accessKeyId.isNotEmpty &&
       secretAccessKey.isNotEmpty;
 
-  /// Priority: `--dart-define` > `.env` > built-in defaults.
-  ///
-  /// Credentials are never baked into source — they must come from env vars or
-  /// a `.env` file that is listed in `.gitignore`.
   static BedrockConfig fromEnvironment() {
     const regionDefine = String.fromEnvironment('AWS_REGION');
     const accessKeyDefine = String.fromEnvironment('AWS_ACCESS_KEY_ID');
@@ -149,14 +119,6 @@ class BedrockConfig {
   }
 }
 
-// ---------------------------------------------------------------------------
-// BedrockClient
-// ---------------------------------------------------------------------------
-
-/// Signed HTTP client for Amazon Bedrock Runtime.
-///
-/// Uses the Converse API for [converse] (text generation)
-/// and the InvokeModel API for [embed] (embeddings).
 class BedrockClient {
   BedrockClient({required this.config});
 
@@ -189,10 +151,6 @@ class BedrockClient {
     service: const AWSService('bedrock'),
   );
 
-  // ─── Converse (text generation) ───────────────────────────────────────────
-
-  /// Sends a Converse request to [BedrockConfig.textModel] and returns
-  /// the assistant text.
   Future<String> converse({
     required String systemPrompt,
     required String userMessage,
@@ -268,18 +226,6 @@ class BedrockClient {
     throw Exception('Bedrock returned no text content');
   }
 
-  // ─── Embed (embedding generation) ─────────────────────────────────────────
-
-  /// Embeds [text] using [BedrockConfig.embedModel] via InvokeModel.
-  ///
-  /// Returns exactly [BedrockEmbedModel.dimensions] unit-normalised float
-  /// values suitable for cosine-similarity search (dot product of unit vectors).
-  ///
-  /// Throws [BedrockUnconfiguredException] when AWS credentials are absent.
-  /// IMPORTANT: call this method DIRECTLY from [VaultIndexService] — do not
-  /// route through api_service.dart wrappers, which catch and re-wrap all
-  /// exceptions as generic [Exception], destroying the typed error needed to
-  /// trigger the BM25 keyword-search fallback.
   Future<List<double>> embed(String text) async {
     if (!config.isConfigured) {
       throw const BedrockUnconfiguredException();

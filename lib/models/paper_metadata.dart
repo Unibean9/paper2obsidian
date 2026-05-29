@@ -1,14 +1,13 @@
 import 'dart:io';
 
-/// Status of the paper workflow.
-///
-/// Transitions: idle → uploaded → extracting → done (or error → uploaded to retry).
-/// The [ActionsPanel] renders different buttons based on this value.
-/// The [_extractPaper] `finally` block is the single owner of cancel-path transitions.
-enum PaperStatus { idle, uploaded, extracting, done, error }
+enum PaperStatus {
+  idle,
+  uploaded,
+  extracting,
+  done,
+  error,
+}
 
-/// Data class holding all extracted metadata for a research paper.
-/// Used as the return type for all PaperController pipeline methods.
 class PaperMetadata {
   const PaperMetadata({
     this.title = '',
@@ -27,7 +26,6 @@ class PaperMetadata {
     this.resolvedPdf,
   });
 
-  /// Returns an empty PaperMetadata with all default values.
   factory PaperMetadata.empty() => const PaperMetadata();
 
   final String title;
@@ -41,18 +39,14 @@ class PaperMetadata {
   final String limitation;
   final String summary;
 
-  /// Abstract text extracted from Grobid XML, or empty if unavailable.
   final String abstract;
 
   final List<String> citations;
 
-  /// Full extracted PDF text (≤10 pages), used for Bedrock summarization and AI chat.
   final String fullPdfText;
 
-  /// The actual PDF File resolved during processing or library open (may be null before processing).
   final File? resolvedPdf;
 
-  /// Returns a copy of this instance with the specified fields replaced.
   PaperMetadata copyWith({
     String? title,
     String? authors,
@@ -68,21 +62,20 @@ class PaperMetadata {
     List<String>? citations,
     String? fullPdfText,
     File? resolvedPdf,
-  }) =>
-      PaperMetadata(
-        title: title ?? this.title,
-        authors: authors ?? this.authors,
-        venue: venue ?? this.venue,
-        year: year ?? this.year,
-        doi: doi ?? this.doi,
-        keywords: keywords ?? this.keywords,
-        dataset: dataset ?? this.dataset,
-        problemStatement: problemStatement ?? this.problemStatement,
-        limitation: limitation ?? this.limitation,
-        summary: summary ?? this.summary,
-        abstract: abstract ?? this.abstract,
-        citations: citations ?? this.citations,
-        fullPdfText: fullPdfText ?? this.fullPdfText,
-        resolvedPdf: resolvedPdf ?? this.resolvedPdf,
-      );
+  }) => PaperMetadata(
+    title: title ?? this.title,
+    authors: authors ?? this.authors,
+    venue: venue ?? this.venue,
+    year: year ?? this.year,
+    doi: doi ?? this.doi,
+    keywords: keywords ?? this.keywords,
+    dataset: dataset ?? this.dataset,
+    problemStatement: problemStatement ?? this.problemStatement,
+    limitation: limitation ?? this.limitation,
+    summary: summary ?? this.summary,
+    abstract: abstract ?? this.abstract,
+    citations: citations ?? this.citations,
+    fullPdfText: fullPdfText ?? this.fullPdfText,
+    resolvedPdf: resolvedPdf ?? this.resolvedPdf,
+  );
 }

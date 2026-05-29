@@ -1,7 +1,5 @@
 import 'package:flutter/material.dart';
 
-/// Reusable card-style container used for all three columns in the workspace.
-/// Extracted from the `_buildPanel` helper in the original main.dart.
 class PanelContainer extends StatelessWidget {
   const PanelContainer({
     super.key,
@@ -14,10 +12,6 @@ class PanelContainer extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // The outer Container paints the white background, rounded corners, and shadow.
-    // The inner Material(transparent) provides a proper Material surface so that
-    // any ListTile / InkWell descendant can paint its ink splash correctly.
-    // Without this, ListTile's ink splash would be hidden behind the DecoratedBox.
     return Container(
       clipBehavior: Clip.antiAlias,
       decoration: BoxDecoration(
@@ -33,10 +27,7 @@ class PanelContainer extends StatelessWidget {
       ),
       child: Material(
         color: Colors.transparent,
-        child: Padding(
-          padding: padding,
-          child: child,
-        ),
+        child: Padding(padding: padding, child: child),
       ),
     );
   }

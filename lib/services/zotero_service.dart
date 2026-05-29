@@ -416,6 +416,7 @@ class ZoteroService {
           headers: {
             ..._headers,
             'Content-Type': 'application/x-www-form-urlencoded',
+            'If-None-Match': '*',
           },
           body: 'upload=$uploadKey',
         )

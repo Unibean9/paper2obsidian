@@ -14,6 +14,7 @@ class LibraryTab extends StatefulWidget {
     this.activeCollectionKey,
     this.loadZoteroCollection,
     this.onImportZoteroItem,
+    this.pendingZoteroItemKey,
   });
 
   final String vaultPath;
@@ -30,6 +31,10 @@ class LibraryTab extends StatefulWidget {
 
   /// Called when user taps Import on a Zotero item.
   final Future<void> Function(ZoteroItem item)? onImportZoteroItem;
+
+  /// Key of a Zotero item that has been imported but not yet saved to Obsidian.
+  /// Its Import button is disabled to prevent duplicate downloads.
+  final String? pendingZoteroItemKey;
 
   @override
   State<LibraryTab> createState() => LibraryTabState();
@@ -136,17 +141,9 @@ class LibraryTabState extends State<LibraryTab>
     setState(() => _importingKey = item.key);
     try {
       await widget.onImportZoteroItem!(item);
-      // Mark as local and refresh local list after import
-      if (mounted) {
-        setState(() {
-          _zoteroItems = _zoteroItems
-              .map((r) => r.item.key == item.key
-                  ? (item: r.item, isLocal: true)
-                  : r)
-              .toList();
-        });
-        _refreshLocal();
-      }
+      // Do NOT mark isLocal here — paper is only truly local after the user
+      // clicks "Save to Obsidian". MainScreen tracks the pending state via
+      // pendingZoteroItemKey and the Import button stays disabled there.
     } catch (_) {
       // Errors are surfaced by MainScreen's _addLog; no extra handling needed here.
     } finally {
@@ -428,16 +425,64 @@ class LibraryTabState extends State<LibraryTab>
     final item = record.item;
     final isLocal = record.isLocal;
     final isImporting = _importingKey == item.key;
+    final isPending = widget.pendingZoteroItemKey == item.key;
+
+    Widget trailing;
+    if (isLocal) {
+      trailing = Chip(
+        label: const Text('Saved', style: TextStyle(fontSize: 10)),
+        backgroundColor: Colors.green.shade50,
+        side: BorderSide(color: Colors.green.shade200),
+        padding: EdgeInsets.zero,
+        visualDensity: VisualDensity.compact,
+      );
+    } else if (isImporting) {
+      trailing = SizedBox(
+        width: 20,
+        height: 20,
+        child: CircularProgressIndicator(
+            strokeWidth: 2, color: widget.primaryColor),
+      );
+    } else if (isPending) {
+      // Downloaded and loaded in main panel — waiting for user to save
+      trailing = Chip(
+        label: Text('Reviewing…',
+            style: TextStyle(fontSize: 10, color: Colors.orange.shade800)),
+        backgroundColor: Colors.orange.shade50,
+        side: BorderSide(color: Colors.orange.shade200),
+        padding: EdgeInsets.zero,
+        visualDensity: VisualDensity.compact,
+      );
+    } else {
+      trailing = Tooltip(
+        message: 'Download & extract this paper',
+        child: IconButton(
+          icon: Icon(Icons.download_outlined,
+              size: 18, color: widget.primaryColor),
+          onPressed: () => _importItem(item),
+        ),
+      );
+    }
 
     return ListTile(
       leading: CircleAvatar(
         backgroundColor: isLocal
             ? Colors.green.shade50
-            : widget.primaryColor.withValues(alpha: 0.08),
+            : isPending
+                ? Colors.orange.shade50
+                : widget.primaryColor.withValues(alpha: 0.08),
         child: Icon(
-          isLocal ? Icons.check : Icons.cloud_outlined,
+          isLocal
+              ? Icons.check
+              : isPending
+                  ? Icons.edit_outlined
+                  : Icons.cloud_outlined,
           size: 16,
-          color: isLocal ? Colors.green.shade700 : widget.primaryColor,
+          color: isLocal
+              ? Colors.green.shade700
+              : isPending
+                  ? Colors.orange.shade700
+                  : widget.primaryColor,
         ),
       ),
       title: Text(
@@ -454,30 +499,7 @@ class LibraryTabState extends State<LibraryTab>
         overflow: TextOverflow.ellipsis,
         style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
       ),
-      trailing: isLocal
-          ? Chip(
-              label: const Text('Saved',
-                  style: TextStyle(fontSize: 10)),
-              backgroundColor: Colors.green.shade50,
-              side: BorderSide(color: Colors.green.shade200),
-              padding: EdgeInsets.zero,
-              visualDensity: VisualDensity.compact,
-            )
-          : isImporting
-              ? SizedBox(
-                  width: 20,
-                  height: 20,
-                  child: CircularProgressIndicator(
-                      strokeWidth: 2, color: widget.primaryColor),
-                )
-              : Tooltip(
-                  message: 'Download & extract this paper',
-                  child: IconButton(
-                    icon: Icon(Icons.download_outlined,
-                        size: 18, color: widget.primaryColor),
-                    onPressed: () => _importItem(item),
-                  ),
-                ),
+      trailing: trailing,
     );
   }
 }

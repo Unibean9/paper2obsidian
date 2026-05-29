@@ -48,6 +48,7 @@ class _MainScreenState extends State<MainScreen> {
   bool _isSwitching = false;
   bool _isZoteroConfigured = false;
   bool _isFromZotero = false;
+  String? _pendingZoteroItemKey; // key imported but not yet saved to Obsidian
 
   String get vaultPath => _activeProject?.vaultPath ?? '';
   String? get _activeCollectionKey => _activeProject?.zoteroCollectionKey;
@@ -469,6 +470,8 @@ class _MainScreenState extends State<MainScreen> {
       _summaryCtrl.clear();
       paperCitations = [];
       _paperAbstract = '';
+      _isFromZotero = false;
+      _pendingZoteroItemKey = null;
     });
   }
 
@@ -494,6 +497,7 @@ class _MainScreenState extends State<MainScreen> {
         abstract: _paperAbstract,
         fullPdfText: fullPdfText,
         resolvedPdf: selectedPdf,
+        zoteroItemKey: _pendingZoteroItemKey,
       );
       await _paperController.saveToObsidian(
         meta: meta,
@@ -502,6 +506,7 @@ class _MainScreenState extends State<MainScreen> {
       );
       if (!mounted) return;
       _showUserMessage(AppMessages.get(MessageKey.statusSavedToObsidian));
+      setState(() => _pendingZoteroItemKey = null);
       // Refresh the library tab to show the newly saved note
       _libraryTabKey.currentState?.refresh();
     } on FileSystemException catch (e) {
@@ -710,7 +715,10 @@ class _MainScreenState extends State<MainScreen> {
       );
       if (mounted) {
         _applyMetadata(meta);
-        setState(() => _paperStatus = PaperStatus.done);
+        setState(() {
+          _paperStatus = PaperStatus.done;
+          _pendingZoteroItemKey = meta.zoteroItemKey;
+        });
       }
     } catch (e) {
       _addLog('❌ Zotero import failed: $e');
@@ -947,6 +955,7 @@ class _MainScreenState extends State<MainScreen> {
                                       .loadZoteroCollectionWithStatus
                                   : null,
                               onImportZoteroItem: _importZoteroItem,
+                              pendingZoteroItemKey: _pendingZoteroItemKey,
                             ),
                           ],
                         ),

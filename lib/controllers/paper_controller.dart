@@ -1,16 +1,21 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:path/path.dart' as p;
 import 'package:http/http.dart' as http;
 import 'package:syncfusion_flutter_pdf/pdf.dart';
 
+import '../config/env_config.dart';
 import '../constants/messages.dart';
+import '../exceptions/user_facing_exception.dart';
 import '../models/paper_metadata.dart';
+import '../models/zotero_item.dart';
 import '../services/api_service.dart';
 import '../services/logger_service.dart';
 import '../services/paper_repository.dart';
 import '../services/vault_index_service.dart';
+import '../services/zotero_service.dart';
 import '../utils/title_inference.dart';
 
 class PaperController {
@@ -731,5 +736,141 @@ ${meta.summary}
       fullPdfText: fullPdfText,
       resolvedPdf: pdfFile,
     );
+  }
+
+  // =========================================================================
+  // ZOTERO INTEGRATION
+  // =========================================================================
+
+  ZoteroService? _zoteroService;
+
+  /// Returns true when API key is stored AND a numeric userID has been resolved.
+  Future<bool> get isZoteroConfigured async {
+    final apiKey = await EnvConfig.getZoteroApiKey();
+    if (apiKey.isEmpty) return false;
+    final userId = await EnvConfig.getResolvedZoteroUserId();
+    return userId != null && userId.isNotEmpty;
+  }
+
+  /// Lazily builds/refreshes ZoteroService with the current API key + userID.
+  Future<ZoteroService> _getZoteroService() async {
+    final apiKey = await EnvConfig.getZoteroApiKey();
+    if (apiKey.isEmpty) {
+      throw const UserFacingException(
+        userMessage: 'No Zotero API key configured. Add one in Settings.',
+      );
+    }
+    final userId = await EnvConfig.getResolvedZoteroUserId();
+    if (userId == null || userId.isEmpty) {
+      throw const UserFacingException(
+        userMessage:
+            'Zotero user ID not resolved. Click "Resolve User ID" in Settings first.',
+      );
+    }
+    if (_zoteroService == null || _zoteroService!.resolvedUserId != userId) {
+      _zoteroService = ZoteroService(apiKey: apiKey);
+      _zoteroService!.setResolvedUserId(userId);
+    } else {
+      _zoteroService!.updateApiKey(apiKey);
+      _zoteroService!.setResolvedUserId(userId);
+    }
+    return _zoteroService!;
+  }
+
+  /// Lists items in a Zotero collection. Caller shows the picker dialog.
+  Future<List<ZoteroItem>> listZoteroItems(String collectionKey) async {
+    final service = await _getZoteroService();
+    return service.listCollectionItems(collectionKey);
+  }
+
+  /// Downloads the PDF for [item] into a temp file inside the vault's
+  /// `.paper2obsidian/` directory, processes it through the existing pipeline,
+  /// and returns the extracted [PaperMetadata].
+  Future<PaperMetadata> importFromZotero({
+    required String vaultPath,
+    required ZoteroItem item,
+    required String collectionKey,
+  }) async {
+    final service = await _getZoteroService();
+
+    // Find the attachment key — list children of the parent item.
+    onLog('Fetching PDF for "${item.title}"…');
+    final targetKey = item.key;
+
+    onLog('Downloading PDF from Zotero…');
+    Uint8List pdfBytes;
+    try {
+      pdfBytes = await service.downloadPdf(targetKey);
+    } catch (_) {
+      // If direct download fails (e.g. item is a parent, not attachment),
+      // surface a clear error rather than silently failing.
+      throw UserFacingException(
+        userMessage:
+            'Could not download PDF for "${item.title}". '
+            'Make sure the item has an attached PDF in Zotero.',
+      );
+    }
+
+    // Write to temp file for processing.
+    final tempDir = Directory(p.join(vaultPath, '.paper2obsidian'));
+    if (!tempDir.existsSync()) tempDir.createSync(recursive: true);
+    final tempPath =
+        p.join(tempDir.path, 'zotero_import_${item.key}.pdf');
+    final tempFile = File(tempPath);
+    try {
+      await tempFile.writeAsBytes(pdfBytes);
+      onLog('Processing downloaded PDF…');
+      final meta = await processPdf(tempFile);
+      return meta;
+    } catch (e) {
+      // Immediate cleanup on any processing error.
+      if (tempFile.existsSync()) {
+        try {
+          await tempFile.delete();
+        } catch (_) {}
+      }
+      rethrow;
+    }
+    // Note: tempFile is left on disk so the caller can use it as `selectedPdf`.
+    // The caller is responsible for cleanup or the startup scan handles orphans.
+  }
+
+  /// Uploads a processed paper's PDF + metadata back to a Zotero collection.
+  Future<void> exportToZotero({
+    required String collectionKey,
+    required PaperMetadata meta,
+    required File pdf,
+  }) async {
+    final service = await _getZoteroService();
+    final pdfBytes = await pdf.readAsBytes();
+    final filename = p.basename(pdf.path);
+
+    await service.uploadPdf(
+      collectionKey: collectionKey,
+      title: meta.title.isNotEmpty ? meta.title : filename,
+      authors: meta.authors,
+      year: meta.year.isNotEmpty ? meta.year : null,
+      doi: meta.doi.isNotEmpty ? meta.doi : null,
+      pdfBytes: pdfBytes,
+      filename: filename,
+      onProgress: onLog,
+    );
+  }
+
+  /// Cleans up any orphaned Zotero import temp files from previous hard crashes.
+  Future<void> cleanupZoteroTempFiles(String vaultPath) async {
+    final tempDir = Directory(p.join(vaultPath, '.paper2obsidian'));
+    if (!tempDir.existsSync()) return;
+    try {
+      final orphans = tempDir
+          .listSync()
+          .whereType<File>()
+          .where((f) => p.basename(f.path).startsWith('zotero_import_'));
+      for (final f in orphans) {
+        try {
+          await f.delete();
+        } catch (_) {}
+      }
+    } catch (_) {}
   }
 }

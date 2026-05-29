@@ -10,11 +10,13 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../constants/messages.dart';
 import '../controllers/paper_controller.dart';
 import '../models/paper_metadata.dart';
+import '../models/project.dart';
 import '../services/api_service.dart';
 import '../services/bedrock_client.dart';
 import '../services/database_service.dart';
 import '../services/logger_service.dart';
 import '../services/paper_repository.dart';
+import '../services/project_service.dart';
 import '../services/vault_index_service.dart';
 import '../utils/desktop_file_helper.dart';
 import '../utils/vault_access.dart';
@@ -25,7 +27,11 @@ import '../widgets/library_tab.dart';
 import '../widgets/metadata_tab.dart';
 import '../widgets/panel_container.dart';
 import '../widgets/pdf_viewer_panel.dart';
+import '../widgets/create_project_dialog.dart';
+import '../widgets/project_status_indicator.dart';
+import '../widgets/project_switcher.dart';
 import '../widgets/settings_dialog.dart';
+import '../widgets/zotero_item_picker_dialog.dart';
 
 class MainScreen extends StatefulWidget {
   const MainScreen({super.key});
@@ -38,7 +44,13 @@ class _MainScreenState extends State<MainScreen> {
   // =========================================================================
   // BUCKET A — Workflow state
   // =========================================================================
-  String vaultPath = '';
+  Project? _activeProject;
+  bool _isSwitching = false;
+  bool _isZoteroConfigured = false;
+
+  String get vaultPath => _activeProject?.vaultPath ?? '';
+  String? get _activeCollectionKey => _activeProject?.zoteroCollectionKey;
+
   File? selectedPdf;
 
   PaperStatus _paperStatus = PaperStatus.idle;
@@ -47,7 +59,6 @@ class _MainScreenState extends State<MainScreen> {
   String fullPdfText = '';
   List<String> paperCitations = [];
   List<String> progressLogs = [];
-  String? _currentPaperPath;
   static const String _globalChatKey = '__global__';
   final Map<String, List<Map<String, dynamic>>> _chatHistory = {};
   bool _indexStale = false;
@@ -132,26 +143,49 @@ class _MainScreenState extends State<MainScreen> {
   }
 
   Future<void> _loadSettings() async {
-    final prefs = await SharedPreferences.getInstance();
-    final rawPath = prefs.getString('vaultPath') ?? '';
-    final path = rawPath.isEmpty ? '' : p.normalize(rawPath);
+    await ProjectService.instance.init();
 
-    // Open DB before setState so LibraryTab's first load finds an open DB.
-    if (path.isNotEmpty) {
-      await DatabaseService.instance.openForVault(path);
+    // Migrate legacy vaultPath pref → default project if no projects exist yet.
+    if (ProjectService.instance.projects.isEmpty) {
+      final prefs = await SharedPreferences.getInstance();
+      final rawPath = prefs.getString('vaultPath') ?? '';
+      final path = rawPath.isEmpty ? '' : p.normalize(rawPath);
+      if (path.isNotEmpty) {
+        final migrated = await ProjectService.instance.createProject(
+          name: 'Default',
+          vaultPath: path,
+        );
+        await ProjectService.instance.init();
+        await DatabaseService.instance.openForVault(path);
+        if (!mounted) return;
+        setState(() => _activeProject = migrated);
+        await _vaultIndexService.loadIndex(path);
+        await _checkStaleness();
+        await _loadChatHistory();
+        return;
+      }
+    }
+
+    final active = ProjectService.instance.activeProject;
+    if (active != null && Directory(active.vaultPath).existsSync()) {
+      await DatabaseService.instance.openForVault(active.vaultPath);
     }
 
     if (!mounted) return;
-    setState(() {
-      vaultPath = path;
-    });
+    setState(() => _activeProject = active);
 
-    // LibraryTab reloads automatically via didUpdateWidget when vaultPath changes
     if (vaultPath.isNotEmpty) {
       await _vaultIndexService.loadIndex(vaultPath);
       await _checkStaleness();
+      await _paperController.cleanupZoteroTempFiles(vaultPath);
     }
     await _loadChatHistory();
+    await _refreshZoteroConfigured();
+  }
+
+  Future<void> _refreshZoteroConfigured() async {
+    final configured = await _paperController.isZoteroConfigured;
+    if (mounted) setState(() => _isZoteroConfigured = configured);
   }
 
   Future<void> _loadChatHistory() async {
@@ -197,13 +231,31 @@ class _MainScreenState extends State<MainScreen> {
   }
 
   Future<void> _saveSettings() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('vaultPath', vaultPath);
-    if (!mounted)
-      return; // ← guard before ScaffoldMessenger to prevent use-after-dispose crash
+    if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(AppMessages.get(MessageKey.statusSettingsSaved))),
     );
+  }
+
+  /// Updates the active project's vault path (or creates a default project if
+  /// none exists). Persists and opens the DB for the new path.
+  Future<void> _applyVaultPath(String newPath) async {
+    if (newPath.isEmpty) return;
+    Project updated;
+    if (_activeProject != null) {
+      updated = _activeProject!.copyWith(vaultPath: newPath);
+      await ProjectService.instance.updateProject(updated);
+    } else {
+      updated = await ProjectService.instance.createProject(
+        name: 'Default',
+        vaultPath: newPath,
+      );
+    }
+    if (!mounted) return;
+    setState(() => _activeProject = updated);
+    await DatabaseService.instance.openForVault(newPath);
+    await _vaultIndexService.loadIndex(newPath);
+    await _checkStaleness();
   }
 
   void _showUserMessage(String message, {bool isError = false}) {
@@ -271,8 +323,8 @@ class _MainScreenState extends State<MainScreen> {
         initialDirectory: vaultPath,
       );
       if (picked == null || picked.isEmpty) return false;
-      setState(() => vaultPath = p.normalize(picked));
-      await _saveSettings();
+      final normalizedPick = p.normalize(picked);
+      await _applyVaultPath(normalizedPick);
       if (await VaultAccess.canWriteToVault(vaultPath)) return true;
     }
 
@@ -289,13 +341,8 @@ class _MainScreenState extends State<MainScreen> {
       builder: (_) => SettingsDialog(
         initialVaultPath: vaultPath,
         onSave: (newPath) async {
-          setState(() => vaultPath = newPath);
+          await _applyVaultPath(newPath);
           await _saveSettings();
-          if (newPath.isNotEmpty) {
-            await DatabaseService.instance.openForVault(newPath);
-            await _vaultIndexService.loadIndex(newPath);
-            await _checkStaleness();
-          }
         },
         onReindex: vaultPath.isEmpty
             ? null
@@ -304,6 +351,10 @@ class _MainScreenState extends State<MainScreen> {
                 if (mounted) setState(() => _indexStale = false);
                 return _vaultIndexService.loadedPaperCount();
               },
+        onZoteroApiKeyChanged: (_) => _refreshZoteroConfigured(),
+        onProjectsChanged: () {
+          if (mounted) setState(() {});
+        },
       ),
     );
   }
@@ -481,17 +532,14 @@ class _MainScreenState extends State<MainScreen> {
     setState(() {
       isLoading = true;
       progressLogs.clear();
-      // Store the current paper path for context (used in RAG scope selector,
-      // not for chat isolation). Chat history is global and shared across all papers.
-      _currentPaperPath = normalizedPath;
       // Library papers are already processed; enable "Save to Obsidian".
       _paperStatus = PaperStatus.done;
     });
-    _addLog(AppMessages.statusLoadingPaper(p.basename(mdPath)));
+    _addLog(AppMessages.statusLoadingPaper(p.basename(normalizedPath)));
 
     try {
       final PaperMetadata meta = await _paperController.openPaperFromLibrary(
-        mdPath,
+        normalizedPath,
       );
       if (mounted) {
         _applyMetadata(meta);
@@ -568,6 +616,123 @@ class _MainScreenState extends State<MainScreen> {
     setState(() => statusText = AppMessages.get(MessageKey.statusCancelled));
   }
 
+  // =========================================================================
+  // PROJECT SWITCHING
+  // =========================================================================
+
+  Future<void> _switchProject(Project project) async {
+    if (_isSwitching || isLoading) return;
+    setState(() => _isSwitching = true);
+    try {
+      await ProjectService.instance.switchProject(
+        project,
+        onVaultChanged: (newPath) async {
+          await _vaultIndexService.loadIndex(newPath);
+          await _checkStaleness();
+        },
+      );
+      if (!mounted) return;
+      setState(() {
+        _activeProject = ProjectService.instance.activeProject;
+        _libraryTabKey.currentState?.refresh();
+        _indexRevision++;
+      });
+    } catch (e) {
+      _showUserMessage(e.toString(), isError: true);
+    } finally {
+      if (mounted) setState(() => _isSwitching = false);
+    }
+  }
+
+  void _showCreateProjectDialog() {
+    showDialog(
+      context: context,
+      builder: (_) => CreateProjectDialog(
+        onCreated: (project) async {
+          await _switchProject(project);
+          if (mounted) setState(() {});
+        },
+      ),
+    );
+  }
+
+  // =========================================================================
+  // ZOTERO IMPORT / EXPORT
+  // =========================================================================
+
+  Future<void> _importFromZotero() async {
+    final collectionKey = _activeCollectionKey;
+    if (collectionKey == null || collectionKey.isEmpty) return;
+    if (isLoading) return;
+
+    setState(() => isLoading = true);
+    try {
+      final items =
+          await _paperController.listZoteroItems(collectionKey);
+      if (!mounted) return;
+
+      final picked = await showDialog<dynamic>(
+        context: context,
+        builder: (_) => ZoteroItemPickerDialog(
+          items: items,
+          collectionName: collectionKey,
+        ),
+      );
+      if (picked == null || !mounted) return;
+
+      final meta = await _paperController.importFromZotero(
+        vaultPath: vaultPath,
+        item: picked,
+        collectionKey: collectionKey,
+      );
+      if (mounted) {
+        _applyMetadata(meta);
+        setState(() => _paperStatus = PaperStatus.done);
+      }
+    } catch (e) {
+      _addLog('❌ Zotero import failed: $e');
+      if (mounted) setState(() => _paperStatus = PaperStatus.error);
+    } finally {
+      if (mounted) setState(() => isLoading = false);
+    }
+  }
+
+  Future<void> _exportToZotero() async {
+    final collectionKey = _activeCollectionKey;
+    if (collectionKey == null || collectionKey.isEmpty) return;
+    if (selectedPdf == null || isLoading) return;
+
+    setState(() => isLoading = true);
+    try {
+      final meta = PaperMetadata(
+        title: _titleCtrl.text,
+        authors: _authorsCtrl.text,
+        venue: _venueCtrl.text,
+        year: _yearCtrl.text,
+        doi: _doiCtrl.text,
+        keywords: _keywordsCtrl.text,
+        dataset: _datasetCtrl.text,
+        problemStatement: _problemCtrl.text,
+        limitation: _limitationCtrl.text,
+        summary: _summaryCtrl.text,
+        abstract: _paperAbstract,
+        fullPdfText: fullPdfText,
+        resolvedPdf: selectedPdf,
+      );
+      await _paperController.exportToZotero(
+        collectionKey: collectionKey,
+        meta: meta,
+        pdf: selectedPdf!,
+      );
+      if (mounted) _showUserMessage('✅ Exported to Zotero successfully.');
+    } catch (e) {
+      _addLog('❌ Zotero export failed: $e');
+      _showUserMessage('Export to Zotero failed: $e', isError: true);
+    } finally {
+      if (mounted) setState(() => isLoading = false);
+    }
+  }
+
   void _applyMetadata(PaperMetadata meta) {
     setState(() {
       _titleCtrl.text = meta.title;
@@ -604,6 +769,22 @@ class _MainScreenState extends State<MainScreen> {
         surfaceTintColor: Colors.transparent,
         elevation: 0,
         actions: [
+          ProjectSwitcher(
+            projects: ProjectService.instance.projects,
+            activeProject: _activeProject,
+            onSwitch: _switchProject,
+            onCreateProject: _showCreateProjectDialog,
+            enabled: !isLoading && !_isSwitching,
+          ),
+          if (_activeProject != null) ...[
+            const SizedBox(width: 8),
+            ProjectStatusIndicator(
+              hasCollectionKey: _activeCollectionKey != null &&
+                  _activeCollectionKey!.isNotEmpty,
+              isZoteroConfigured: _isZoteroConfigured,
+            ),
+          ],
+          const SizedBox(width: 8),
           Padding(
             padding: const EdgeInsets.only(right: 16.0),
             child: FilledButton.tonalIcon(
@@ -614,7 +795,9 @@ class _MainScreenState extends State<MainScreen> {
           ),
         ],
       ),
-      body: Padding(
+      body: _activeProject == null && !_isSwitching
+          ? _buildNoProjectState()
+          : Padding(
         padding: const EdgeInsets.all(20.0),
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -634,6 +817,10 @@ class _MainScreenState extends State<MainScreen> {
                 onDiscard: _discardPaper,
                 onSaveToObsidian: _saveToObsidian,
                 onCancel: _handleCancel,
+                isZoteroConfigured: _isZoteroConfigured,
+                activeCollectionKey: _activeCollectionKey,
+                onImportFromZotero: _importFromZotero,
+                onExportFromZotero: _exportToZotero,
               ),
             ),
 
@@ -739,6 +926,37 @@ class _MainScreenState extends State<MainScreen> {
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildNoProjectState() {
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.folder_special_outlined,
+              size: 64, color: Colors.grey.shade400),
+          const SizedBox(height: 16),
+          Text(
+            'No project open',
+            style: TextStyle(
+                fontSize: 20,
+                fontWeight: FontWeight.w600,
+                color: Colors.grey.shade700),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Create a project to get started.',
+            style: TextStyle(fontSize: 14, color: Colors.grey.shade500),
+          ),
+          const SizedBox(height: 24),
+          FilledButton.icon(
+            onPressed: _showCreateProjectDialog,
+            icon: const Icon(Icons.add),
+            label: const Text('Create Project'),
+          ),
+        ],
       ),
     );
   }

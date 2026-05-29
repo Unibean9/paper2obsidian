@@ -20,6 +20,10 @@ class ActionsPanel extends StatefulWidget {
     required this.onDiscard,
     required this.onSaveToObsidian,
     required this.onCancel,
+    this.isZoteroConfigured = false,
+    this.activeCollectionKey,
+    this.onImportFromZotero,
+    this.onExportFromZotero,
   });
 
   final PaperStatus paperStatus;
@@ -31,12 +35,15 @@ class ActionsPanel extends StatefulWidget {
   final String statusText;
   final Color primaryColor;
   final VoidCallback onPickPdf;
-
   final VoidCallback onExtract;
-
   final VoidCallback onDiscard;
   final VoidCallback onSaveToObsidian;
   final VoidCallback onCancel;
+
+  final bool isZoteroConfigured;
+  final String? activeCollectionKey;
+  final VoidCallback? onImportFromZotero;
+  final VoidCallback? onExportFromZotero;
 
   @override
   State<ActionsPanel> createState() => _ActionsPanelState();
@@ -260,6 +267,32 @@ class _ActionsPanelState extends State<ActionsPanel> {
           ),
           const SizedBox(height: 16),
 
+          // ── Zotero Import / Export buttons
+          if (widget.isZoteroConfigured) ...[
+            _ZoteroActionButton(
+              icon: Icons.cloud_download_outlined,
+              label: 'Import from Zotero',
+              tooltip: widget.activeCollectionKey == null
+                  ? 'Set a Zotero collection key for this project first'
+                  : null,
+              enabled: !isBusy && widget.activeCollectionKey != null,
+              onTap: widget.onImportFromZotero,
+            ),
+            const SizedBox(height: 8),
+            _ZoteroActionButton(
+              icon: Icons.cloud_upload_outlined,
+              label: 'Export to Zotero',
+              tooltip: widget.activeCollectionKey == null
+                  ? 'Set a Zotero collection key for this project first'
+                  : (!isDone ? 'Extract a paper first' : null),
+              enabled: isDone &&
+                  !isBusy &&
+                  widget.activeCollectionKey != null,
+              onTap: widget.onExportFromZotero,
+            ),
+            const SizedBox(height: 16),
+          ],
+
           // ── Save to Obsidian button — only enabled when done and not saving
           FilledButton.icon(
             onPressed:
@@ -290,5 +323,38 @@ class _ActionsPanelState extends State<ActionsPanel> {
         ],
       ),
     );
+  }
+}
+
+class _ZoteroActionButton extends StatelessWidget {
+  const _ZoteroActionButton({
+    required this.icon,
+    required this.label,
+    required this.enabled,
+    this.tooltip,
+    this.onTap,
+  });
+
+  final IconData icon;
+  final String label;
+  final bool enabled;
+  final String? tooltip;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final button = OutlinedButton.icon(
+      onPressed: enabled ? onTap : null,
+      icon: Icon(icon, size: 16),
+      label: Text(label, style: const TextStyle(fontSize: 13)),
+      style: OutlinedButton.styleFrom(
+        minimumSize: const Size(double.infinity, 40),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+      ),
+    );
+    if (tooltip != null && !enabled) {
+      return Tooltip(message: tooltip!, child: button);
+    }
+    return button;
   }
 }

@@ -2,10 +2,19 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:path/path.dart' as p;
+import 'package:shared_preferences/shared_preferences.dart' show SharedPreferences;
 
 class EnvConfig {
   EnvConfig._();
+
+  static const _secureStorage = FlutterSecureStorage(
+    aOptions: AndroidOptions(encryptedSharedPreferences: true),
+    wOptions: WindowsOptions(),
+  );
+  static const _zoteroApiKeyStorageKey = 'zotero_api_key';
+  static const _zoteroUserIdPrefKey = 'resolvedZoteroUserId';
 
   static const String assetPath = '.env';
 
@@ -133,6 +142,36 @@ class EnvConfig {
         value = value.substring(1, value.length - 1);
       }
       _values[key] = value.trim();
+    }
+  }
+
+  // =========================================================================
+  // ZOTERO CREDENTIALS — stored in Windows Credential Manager via DPAPI
+  // =========================================================================
+
+  static Future<String> getZoteroApiKey() async {
+    return await _secureStorage.read(key: _zoteroApiKeyStorageKey) ?? '';
+  }
+
+  static Future<void> setZoteroApiKey(String key) async {
+    if (key.isEmpty) {
+      await _secureStorage.delete(key: _zoteroApiKeyStorageKey);
+    } else {
+      await _secureStorage.write(key: _zoteroApiKeyStorageKey, value: key);
+    }
+  }
+
+  static Future<String?> getResolvedZoteroUserId() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString(_zoteroUserIdPrefKey);
+  }
+
+  static Future<void> setResolvedZoteroUserId(String? userId) async {
+    final prefs = await SharedPreferences.getInstance();
+    if (userId == null) {
+      await prefs.remove(_zoteroUserIdPrefKey);
+    } else {
+      await prefs.setString(_zoteroUserIdPrefKey, userId);
     }
   }
 }

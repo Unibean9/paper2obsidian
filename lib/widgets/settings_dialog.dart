@@ -1,8 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:path/path.dart' as p;
 
+import '../config/env_config.dart';
+import '../services/project_service.dart';
+import '../services/zotero_service.dart';
 import '../utils/vault_access.dart';
 import '../utils/desktop_file_helper.dart';
+import 'manage_projects_dialog.dart';
 
 class SettingsDialog extends StatefulWidget {
   const SettingsDialog({
@@ -10,13 +14,15 @@ class SettingsDialog extends StatefulWidget {
     required this.initialVaultPath,
     required this.onSave,
     this.onReindex,
+    this.onZoteroApiKeyChanged,
+    this.onProjectsChanged,
   });
 
   final String initialVaultPath;
-
   final Future<void> Function(String newPath) onSave;
-
   final Future<int> Function()? onReindex;
+  final void Function(String apiKey)? onZoteroApiKeyChanged;
+  final VoidCallback? onProjectsChanged;
 
   @override
   State<SettingsDialog> createState() => _SettingsDialogState();
@@ -24,23 +30,36 @@ class SettingsDialog extends StatefulWidget {
 
 class _SettingsDialogState extends State<SettingsDialog> {
   late final TextEditingController _vaultCtrl;
+  late final TextEditingController _zoteroKeyCtrl;
 
   String? _errorMessage;
   bool _isSaving = false;
-
   bool _isIndexing = false;
   String? _indexResult;
   String? _indexError;
+
+  bool _isResolvingUserId = false;
+  String? _resolveResult;
+  String? _resolveError;
+  bool _isSavingZotero = false;
 
   @override
   void initState() {
     super.initState();
     _vaultCtrl = TextEditingController(text: widget.initialVaultPath);
+    _zoteroKeyCtrl = TextEditingController();
+    _loadZoteroKey();
+  }
+
+  Future<void> _loadZoteroKey() async {
+    final key = await EnvConfig.getZoteroApiKey();
+    if (mounted) _zoteroKeyCtrl.text = key;
   }
 
   @override
   void dispose() {
     _vaultCtrl.dispose();
+    _zoteroKeyCtrl.dispose();
     super.dispose();
   }
 
@@ -49,7 +68,6 @@ class _SettingsDialogState extends State<SettingsDialog> {
       initialDirectory: _vaultCtrl.text.isNotEmpty ? _vaultCtrl.text : null,
     );
     if (path == null || path.isEmpty) return;
-
     if (!await VaultAccess.canWriteToVault(path)) {
       if (!mounted) return;
       setState(() {
@@ -58,7 +76,6 @@ class _SettingsDialogState extends State<SettingsDialog> {
       });
       return;
     }
-
     if (!mounted) return;
     setState(() {
       _vaultCtrl.text = path;
@@ -74,8 +91,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
     });
     try {
       final count = await widget.onReindex!();
-      if (mounted)
-        setState(() => _indexResult = 'Vault indexed — $count papers');
+      if (mounted) setState(() => _indexResult = 'Vault indexed — $count papers');
     } catch (e) {
       if (mounted) setState(() => _indexError = 'Re-index failed: $e');
     } finally {
@@ -85,7 +101,6 @@ class _SettingsDialogState extends State<SettingsDialog> {
 
   Future<void> _onSave() async {
     final String newVault = p.normalize(_vaultCtrl.text.trim());
-
     if (newVault.isNotEmpty && !await VaultAccess.canWriteToVault(newVault)) {
       if (!mounted) return;
       setState(() {
@@ -94,7 +109,6 @@ class _SettingsDialogState extends State<SettingsDialog> {
       });
       return;
     }
-
     setState(() => _isSaving = true);
     try {
       await widget.onSave(newVault);
@@ -102,6 +116,70 @@ class _SettingsDialogState extends State<SettingsDialog> {
     } finally {
       if (mounted) setState(() => _isSaving = false);
     }
+  }
+
+  Future<void> _onSaveZoteroKey() async {
+    setState(() => _isSavingZotero = true);
+    try {
+      final key = _zoteroKeyCtrl.text.trim();
+      await EnvConfig.setZoteroApiKey(key);
+      widget.onZoteroApiKeyChanged?.call(key);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Zotero API key saved.')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isSavingZotero = false);
+    }
+  }
+
+  Future<void> _onResolveUserId() async {
+    setState(() {
+      _isResolvingUserId = true;
+      _resolveResult = null;
+      _resolveError = null;
+    });
+    try {
+      final apiKey = _zoteroKeyCtrl.text.trim();
+      if (apiKey.isEmpty) {
+        setState(() => _resolveError = 'Enter and save an API key first.');
+        return;
+      }
+      final service = ZoteroService(apiKey: apiKey);
+      final data = await service.resolveUserId();
+      final userId = data['userID']?.toString();
+      if (userId == null) {
+        setState(() => _resolveError = 'Could not extract user ID from response.');
+        return;
+      }
+
+      await EnvConfig.setResolvedZoteroUserId(userId);
+
+      final access = data['access'] as Map<String, dynamic>?;
+      final library = access?['library'] as Map<String, dynamic>?;
+      final canWrite = library?['write'] == true || library?['write'] == 1;
+
+      String msg = 'User ID: $userId';
+      if (!canWrite) {
+        msg += '\n⚠ This key has read-only access — Export to Zotero will be disabled.';
+      }
+      if (mounted) setState(() => _resolveResult = msg);
+    } catch (e) {
+      if (mounted) setState(() => _resolveError = 'Failed to resolve: $e');
+    } finally {
+      if (mounted) setState(() => _isResolvingUserId = false);
+    }
+  }
+
+  void _openManageProjects() {
+    showDialog(
+      context: context,
+      builder: (_) => ManageProjectsDialog(
+        activeProjectId: ProjectService.instance.activeProject?.id,
+        onProjectsChanged: () => widget.onProjectsChanged?.call(),
+      ),
+    );
   }
 
   @override
@@ -112,11 +190,13 @@ class _SettingsDialogState extends State<SettingsDialog> {
         style: TextStyle(fontWeight: FontWeight.bold),
       ),
       content: SizedBox(
-        width: 480,
+        width: 500,
         child: SingleChildScrollView(
           child: Column(
             mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              // ── Vault path ──────────────────────────────────────────────
               TextField(
                 controller: _vaultCtrl,
                 readOnly: VaultAccess.requiresPickerGrant,
@@ -132,7 +212,6 @@ class _SettingsDialogState extends State<SettingsDialog> {
                       : null,
                 ),
               ),
-              // Error display pattern: inline Text, never ScaffoldMessenger
               if (_errorMessage != null)
                 Padding(
                   padding: const EdgeInsets.only(top: 4),
@@ -151,7 +230,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
                 ),
               const SizedBox(height: 8),
 
-              // Re-index Vault section — only shown when callback is provided
+              // ── Re-index ─────────────────────────────────────────────────
               if (widget.onReindex != null) ...[
                 const Divider(height: 24),
                 Row(
@@ -163,9 +242,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
                             ? const SizedBox(
                                 width: 16,
                                 height: 16,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                ),
+                                child: CircularProgressIndicator(strokeWidth: 2),
                               )
                             : const Icon(Icons.refresh, size: 18),
                         label: const Text('Re-index Vault'),
@@ -178,10 +255,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
                     padding: const EdgeInsets.only(top: 6),
                     child: Text(
                       _indexResult!,
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: Colors.green.shade700,
-                      ),
+                      style: TextStyle(fontSize: 12, color: Colors.green.shade700),
                     ),
                   ),
                 if (_indexError != null)
@@ -189,13 +263,85 @@ class _SettingsDialogState extends State<SettingsDialog> {
                     padding: const EdgeInsets.only(top: 6),
                     child: Text(
                       _indexError!,
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: Colors.red.shade700,
-                      ),
+                      style: TextStyle(fontSize: 12, color: Colors.red.shade700),
                     ),
                   ),
               ],
+
+              // ── Projects ─────────────────────────────────────────────────
+              const Divider(height: 28),
+              const Text(
+                'Projects',
+                style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
+              ),
+              const SizedBox(height: 8),
+              SizedBox(
+                width: double.infinity,
+                child: OutlinedButton.icon(
+                  onPressed: _openManageProjects,
+                  icon: const Icon(Icons.manage_accounts_outlined, size: 18),
+                  label: const Text('Manage Projects'),
+                ),
+              ),
+
+              // ── Zotero ───────────────────────────────────────────────────
+              const Divider(height: 28),
+              const Text(
+                'Zotero',
+                style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
+              ),
+              const SizedBox(height: 8),
+              TextField(
+                controller: _zoteroKeyCtrl,
+                obscureText: true,
+                decoration: const InputDecoration(
+                  labelText: 'Zotero API Key',
+                  prefixIcon: Icon(Icons.vpn_key_outlined),
+                  helperText: 'Stored securely in Windows Credential Manager.',
+                ),
+              ),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  Expanded(
+                    child: FilledButton.tonalIcon(
+                      onPressed: _isSavingZotero ? null : _onSaveZoteroKey,
+                      icon: const Icon(Icons.save_outlined, size: 18),
+                      label: const Text('Save API Key'),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: FilledButton.tonalIcon(
+                      onPressed: _isResolvingUserId ? null : _onResolveUserId,
+                      icon: _isResolvingUserId
+                          ? const SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(Icons.person_search_outlined, size: 18),
+                      label: const Text('Resolve User ID'),
+                    ),
+                  ),
+                ],
+              ),
+              if (_resolveResult != null)
+                Padding(
+                  padding: const EdgeInsets.only(top: 6),
+                  child: Text(
+                    _resolveResult!,
+                    style: TextStyle(fontSize: 12, color: Colors.green.shade700),
+                  ),
+                ),
+              if (_resolveError != null)
+                Padding(
+                  padding: const EdgeInsets.only(top: 6),
+                  child: Text(
+                    _resolveError!,
+                    style: TextStyle(fontSize: 12, color: Colors.red.shade700),
+                  ),
+                ),
             ],
           ),
         ),

@@ -246,8 +246,9 @@ class _MainScreenState extends State<MainScreen> {
   Future<void> _applyVaultPath(String newPath) async {
     if (newPath.isEmpty) return;
     Project updated;
-    if (_activeProject != null) {
-      updated = _activeProject!.copyWith(vaultPath: newPath);
+    final base = ProjectService.instance.activeProject ?? _activeProject;
+    if (base != null) {
+      updated = base.copyWith(vaultPath: newPath);
       await ProjectService.instance.updateProject(updated);
     } else {
       updated = await ProjectService.instance.createProject(
@@ -357,7 +358,11 @@ class _MainScreenState extends State<MainScreen> {
               },
         onZoteroApiKeyChanged: (_) => _refreshZoteroConfigured(),
         onProjectsChanged: () {
-          if (mounted) setState(() {});
+          if (mounted) {
+            setState(() {
+              _activeProject = ProjectService.instance.activeProject;
+            });
+          }
         },
       ),
     );

@@ -16,7 +16,7 @@ class PaperToObsidianApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Paper to Obsidian',
+      title: 'Hyperdatalab - P2O',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(

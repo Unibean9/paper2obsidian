@@ -89,13 +89,13 @@ BEGIN
     BEGIN
         BLOCK "040904e4"
         BEGIN
-            VALUE "CompanyName", "com.example" "\0"
-            VALUE "FileDescription", "paper_to_obsidian" "\0"
+            VALUE "CompanyName", "Hyperdatalab" "\0"
+            VALUE "FileDescription", "Hyperdatalab - P2O" "\0"
             VALUE "FileVersion", VERSION_AS_STRING "\0"
             VALUE "InternalName", "paper_to_obsidian" "\0"
-            VALUE "LegalCopyright", "Copyright (C) 2026 com.example. All rights reserved." "\0"
+            VALUE "LegalCopyright", "Copyright (C) 2026 Hyperdatalab. All rights reserved." "\0"
             VALUE "OriginalFilename", "paper_to_obsidian.exe" "\0"
-            VALUE "ProductName", "paper_to_obsidian" "\0"
+            VALUE "ProductName", "Hyperdatalab - P2O" "\0"
             VALUE "ProductVersion", VERSION_AS_STRING "\0"
         END
     END

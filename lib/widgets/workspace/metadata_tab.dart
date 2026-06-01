@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
 
+import '../../theme/app_colors.dart';
+import '../../theme/app_spacing.dart';
+
 class MetadataTab extends StatelessWidget {
   const MetadataTab({
     super.key,
@@ -29,7 +32,7 @@ class MetadataTab extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return SingleChildScrollView(
-      padding: const EdgeInsets.all(20),
+      padding: const EdgeInsets.all(AppSpacing.xxl),
       child: Column(
         children: [
           _buildTextField('Title', titleCtrl, maxLines: 3),
@@ -39,7 +42,7 @@ class MetadataTab extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Expanded(child: _buildTextField('Year', yearCtrl)),
-              const SizedBox(width: 12),
+              const SizedBox(width: AppSpacing.md),
               Expanded(child: _buildTextField('DOI', doiCtrl)),
             ],
           ),
@@ -60,37 +63,38 @@ Widget _buildTextField(
   TextEditingController controller, {
   int maxLines = 1,
 }) {
-  return Padding(
-    padding: const EdgeInsets.only(bottom: 16),
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Padding(
-          padding: const EdgeInsets.only(left: 4, bottom: 6),
-          child: Text(
-            label,
-            style: TextStyle(
-              fontSize: 13,
-              fontWeight: FontWeight.bold,
-              color: Colors.grey.shade700,
+  return Builder(
+    builder: (context) {
+      final theme = Theme.of(context);
+      return Padding(
+        padding: const EdgeInsets.only(bottom: AppSpacing.lg),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Padding(
+              padding: const EdgeInsets.only(
+                left: AppSpacing.xs,
+                bottom: AppSpacing.sm,
+              ),
+              child: Text(
+                label.toUpperCase(),
+                style: theme.textTheme.titleSmall?.copyWith(
+                  color: AppColors.textSecondary,
+                ),
+              ),
             ),
-          ),
-        ),
-        TextField(
-          controller: controller,
-          minLines: 1,
-          maxLines: maxLines,
-          style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
-          decoration: InputDecoration(
-            hintText: 'Enter $label...',
-            hintStyle: TextStyle(
-              color: Colors.grey.shade400,
-              fontWeight: FontWeight.normal,
-              fontSize: 13,
+            TextField(
+              controller: controller,
+              minLines: 1,
+              maxLines: maxLines,
+              style: theme.textTheme.bodyLarge?.copyWith(
+                color: AppColors.textPrimary,
+              ),
+              decoration: InputDecoration(hintText: 'Enter $label...'),
             ),
-          ),
+          ],
         ),
-      ],
-    ),
+      );
+    },
   );
 }

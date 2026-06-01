@@ -86,11 +86,13 @@ class ProjectService {
   Future<Project> createProject({
     required String name,
     required String vaultPath,
+    String? locale,
     String? zoteroCollectionKey,
   }) async {
     final project = Project(
       name: name,
       vaultPath: vaultPath,
+      locale: locale,
       zoteroCollectionKey: zoteroCollectionKey,
     );
     _projects.add(project);

@@ -18,20 +18,22 @@ import '../services/logger_service.dart';
 import '../services/paper_repository.dart';
 import '../services/project_service.dart';
 import '../services/vault_index_service.dart';
+import '../theme/app_colors.dart';
+import '../theme/app_spacing.dart';
 import '../utils/desktop_file_helper.dart';
 import '../utils/vault_access.dart';
-import '../widgets/actions_panel.dart';
-import '../widgets/chat_tab.dart';
-import '../widgets/citations_tab.dart';
-import '../widgets/library_tab.dart';
-import '../widgets/metadata_tab.dart';
-import '../widgets/panel_container.dart';
-import '../widgets/pdf_viewer_panel.dart';
-import '../widgets/create_project_dialog.dart';
-import '../widgets/project_status_indicator.dart';
-import '../widgets/project_switcher.dart';
-import '../widgets/settings_dialog.dart';
-import '../widgets/zotero_item_picker_dialog.dart';
+import '../widgets/chat/chat_tab.dart';
+import '../widgets/project/main_home_view.dart';
+import '../widgets/workspace/pdf_viewer_panel.dart';
+import '../widgets/project/create_project_dialog.dart';
+import '../widgets/settings/settings_dialog.dart';
+import '../widgets/zotero/zotero_item_picker_dialog.dart';
+import '../widgets/workspace/workspace_sidebar.dart';
+import '../widgets/workspace/workspace_layout.dart';
+import '../widgets/workspace/workspace_header.dart';
+import '../widgets/workspace/library_tab.dart';
+import '../widgets/common/panel_container.dart';
+import '../widgets/common/animated_dialog.dart';
 
 class MainScreen extends StatefulWidget {
   const MainScreen({super.key});
@@ -41,6 +43,8 @@ class MainScreen extends StatefulWidget {
 }
 
 class _MainScreenState extends State<MainScreen> {
+  static const Duration _panelAnimationDuration = Duration(milliseconds: 220);
+
   // =========================================================================
   // BUCKET A — Workflow state
   // =========================================================================
@@ -50,6 +54,8 @@ class _MainScreenState extends State<MainScreen> {
   bool _isFromZotero = false;
   String? _pendingZoteroItemKey; // key imported but not yet saved to Obsidian
   String? _currentPaperDedupKey; // dedupKey of paper currently open in viewer
+  bool _isSidebarCollapsed = false;
+  bool _isChatCollapsed = false;
 
   String get vaultPath => _activeProject?.vaultPath ?? '';
   String? get _activeCollectionKey => _activeProject?.zoteroCollectionKey;
@@ -68,6 +74,8 @@ class _MainScreenState extends State<MainScreen> {
   bool _bannerDismissed = false;
   int _indexRevision = 0;
   String _paperAbstract = '';
+  int _workspaceSection = 0;
+  bool _showHome = true;
 
   final _titleCtrl = TextEditingController();
   final _authorsCtrl = TextEditingController();
@@ -269,7 +277,7 @@ class _MainScreenState extends State<MainScreen> {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(message),
-        backgroundColor: isError ? Colors.red.shade700 : null,
+        backgroundColor: isError ? AppColors.error : null,
       ),
     );
   }
@@ -341,9 +349,9 @@ class _MainScreenState extends State<MainScreen> {
   }
 
   void _showSettingsDialog(BuildContext context) {
-    showDialog(
+    showAnimatedDialog(
       context: context,
-      builder: (_) => SettingsDialog(
+      child: SettingsDialog(
         initialVaultPath: vaultPath,
         onSave: (newPath) async {
           await _applyVaultPath(newPath);
@@ -605,11 +613,12 @@ class _MainScreenState extends State<MainScreen> {
   Future<void> _rebuildIndex() async {
     try {
       await _vaultIndexService.indexVault(vaultPath);
-      if (mounted)
+      if (mounted) {
         setState(() {
           _indexStale = false;
           _indexRevision++;
         });
+      }
     } catch (e) {
       AppLogger.log(
         'Vault reindex failed',
@@ -620,7 +629,7 @@ class _MainScreenState extends State<MainScreen> {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('Vault re-index failed: $e'),
-            backgroundColor: Colors.red.shade700,
+            backgroundColor: AppColors.error,
           ),
         );
       }
@@ -661,12 +670,11 @@ class _MainScreenState extends State<MainScreen> {
   }
 
   void _showCreateProjectDialog() {
-    showDialog(
+    showAnimatedDialog(
       context: context,
-      builder: (_) => CreateProjectDialog(
+      child: CreateProjectDialog(
         onCreated: (project) async {
-          await _switchProject(project);
-          if (mounted) setState(() {});
+          await _openProject(project);
         },
       ),
     );
@@ -686,9 +694,9 @@ class _MainScreenState extends State<MainScreen> {
       final items = await _paperController.listZoteroItems(collectionKey);
       if (!mounted) return;
 
-      final picked = await showDialog<dynamic>(
+      final picked = await showAnimatedDialog<dynamic>(
         context: context,
-        builder: (_) =>
+        child:
             ZoteroItemPickerDialog(items: items, collectionName: collectionKey),
       );
       if (picked == null || !mounted) return;
@@ -766,7 +774,10 @@ class _MainScreenState extends State<MainScreen> {
       // shows "Saved" and prevents duplicate imports.
       if (_currentPaperDedupKey != null) {
         try {
-          await _paperRepository.updateZoteroKey(_currentPaperDedupKey!, zoteroKey);
+          await _paperRepository.updateZoteroKey(
+            _currentPaperDedupKey!,
+            zoteroKey,
+          );
         } catch (_) {}
       }
       if (mounted) {
@@ -807,227 +818,145 @@ class _MainScreenState extends State<MainScreen> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final Color primaryColor = theme.colorScheme.primary;
+    final hasProject = _activeProject != null && !_isSwitching;
 
     return Scaffold(
       backgroundColor: theme.colorScheme.surface,
       appBar: AppBar(
-        title: const Text(
-          'Paper to Obsidian',
-          style: TextStyle(fontWeight: FontWeight.w600),
+        toolbarHeight: AppSpacing.sectionLarge + AppSpacing.xxl,
+        titleSpacing: 14,
+        actionsPadding: const EdgeInsets.only(right: 14),
+        title: WorkspaceHeader(
+          showHome: _showHome,
+          activeProject: _activeProject,
+          onBackHome: _openHome,
         ),
         centerTitle: false,
-        backgroundColor: Colors.white,
-        surfaceTintColor: Colors.transparent,
-        elevation: 0,
         actions: [
-          ProjectSwitcher(
-            projects: ProjectService.instance.projects,
-            activeProject: _activeProject,
-            onSwitch: _switchProject,
-            onCreateProject: _showCreateProjectDialog,
-            enabled: !isLoading && !_isSwitching,
-          ),
-          if (_activeProject != null) ...[
-            const SizedBox(width: 8),
-            ProjectStatusIndicator(
-              hasCollectionKey:
-                  _activeCollectionKey != null &&
-                  _activeCollectionKey!.isNotEmpty,
-              isZoteroConfigured: _isZoteroConfigured,
-            ),
-          ],
-          const SizedBox(width: 8),
-          Padding(
-            padding: const EdgeInsets.only(right: 16.0),
-            child: FilledButton.tonalIcon(
-              onPressed: () => _showSettingsDialog(context),
-              icon: const Icon(Icons.settings, size: 18),
-              label: const Text('Settings'),
-            ),
+          WorkspaceHeaderActions(
+            showHome: _showHome,
+            hasProject: hasProject,
+            isZoteroConfigured: _isZoteroConfigured,
+            activeCollectionKey: _activeCollectionKey,
+            isLoading: isLoading,
+            onNewProject: _showCreateProjectDialog,
+            onZotero: _importFromZotero,
+            onSettings: () => _showSettingsDialog(context),
           ),
         ],
       ),
-      body: _activeProject == null && !_isSwitching
-          ? _buildNoProjectState()
-          : Padding(
-              padding: const EdgeInsets.all(20.0),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  SizedBox(
-                    width: 260,
-                    child: ActionsPanel(
-                      paperStatus: _paperStatus,
-                      isLoading: isLoading,
-                      vaultPath: vaultPath,
-                      selectedPdf: selectedPdf,
-                      progressLogs: progressLogs,
-                      statusText: statusText,
-                      primaryColor: primaryColor,
-                      onPickPdf: _pickPdf,
-                      onExtract: _extractPaper,
-                      onDiscard: _discardPaper,
-                      onSaveToObsidian: _saveToObsidian,
-                      onCancel: _handleCancel,
-                      isZoteroConfigured: _isZoteroConfigured,
-                      activeCollectionKey: _activeCollectionKey,
-                      onImportFromZotero: _importFromZotero,
-                      onExportFromZotero: _exportToZotero,
-                      isFromZotero: _isFromZotero,
-                    ),
-                  ),
-
-                  const SizedBox(width: 20),
-                  Expanded(
-                    flex: 5,
-                    child: PdfViewerPanel(
-                      selectedPdf: selectedPdf,
-                      primaryColor: primaryColor,
-                    ),
-                  ),
-
-                  const SizedBox(width: 20),
-                  Expanded(
-                    flex: 4,
-                    child: PanelContainer(
-                      padding: EdgeInsets.zero,
-                      child: DefaultTabController(
-                        length: 4,
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
-                          children: [
-                            Container(
-                              color: Colors.grey.shade50,
-                              child: TabBar(
-                                indicatorColor: primaryColor,
-                                indicatorWeight: 3,
-                                labelColor: primaryColor,
-                                unselectedLabelColor: Colors.grey.shade600,
-                                tabs: const [
-                                  Tab(
-                                    icon: Icon(Icons.auto_awesome, size: 18),
-                                    text: 'Metadata',
-                                  ),
-                                  Tab(
-                                    icon: Icon(
-                                      Icons.chat_bubble_outline,
-                                      size: 18,
-                                    ),
-                                    text: 'AI Chat',
-                                  ),
-                                  Tab(
-                                    icon: Icon(Icons.format_quote, size: 18),
-                                    text: 'Citations',
-                                  ),
-                                  Tab(
-                                    icon: Icon(Icons.local_library, size: 18),
-                                    text: 'Library',
-                                  ),
-                                ],
-                              ),
-                            ),
-                            const Divider(height: 1),
-                            Expanded(
-                              child: TabBarView(
-                                children: [
-                                  MetadataTab(
-                                    titleCtrl: _titleCtrl,
-                                    authorsCtrl: _authorsCtrl,
-                                    venueCtrl: _venueCtrl,
-                                    yearCtrl: _yearCtrl,
-                                    doiCtrl: _doiCtrl,
-                                    keywordsCtrl: _keywordsCtrl,
-                                    datasetCtrl: _datasetCtrl,
-                                    problemCtrl: _problemCtrl,
-                                    limitationCtrl: _limitationCtrl,
-                                    summaryCtrl: _summaryCtrl,
-                                  ),
-                                  ChatTab(
-                                    vaultIndexService: _vaultIndexService,
-                                    bedrockClient: _bedrockClient,
-                                    primaryColor: primaryColor,
-                                    showStaleBanner:
-                                        _indexStale && !_bannerDismissed,
-                                    onRebuildIndex: _rebuildIndex,
-                                    onDismissBanner: () =>
-                                        setState(() => _bannerDismissed = true),
-                                    initialMessages: List.from(
-                                      _chatHistory[_globalChatKey] ?? [],
-                                    ),
-                                    onMessagesChanged: _onChatMessagesChanged,
-                                    // onCitationsUpdated intentionally not wired:
-                                    // paperCitations is set exclusively from
-                                    // _applyMetadata(meta.citations) so the
-                                    // Extracted Citations panel always shows the
-                                    // paper's bibliography, not AI RAG results.
-                                    indexRevision: _indexRevision,
-                                  ),
-                                  CitationsTab(
-                                    citations: paperCitations,
-                                    primaryColor: primaryColor,
-                                  ),
-                                  LibraryTab(
-                                    key: _libraryTabKey,
-                                    vaultPath: vaultPath,
-                                    onOpenPaper: _openPaperFromLibrary,
-                                    loadLibrary: _loadLibrary,
-                                    primaryColor: primaryColor,
-                                    isZoteroConfigured: _isZoteroConfigured,
-                                    activeCollectionKey: _activeCollectionKey,
-                                    loadZoteroCollection:
-                                        _activeCollectionKey != null
-                                        ? _paperController
-                                              .loadZoteroCollectionWithStatus
-                                        : null,
-                                    onImportZoteroItem: _importZoteroItem,
-                                    pendingZoteroItemKey: _pendingZoteroItemKey,
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
+      body: AnimatedSwitcher(
+        duration: _panelAnimationDuration,
+        switchInCurve: Curves.easeOutCubic,
+        switchOutCurve: Curves.easeInCubic,
+        transitionBuilder: (child, animation) {
+          final offsetAnimation = Tween<Offset>(
+            begin: const Offset(0.02, 0),
+            end: Offset.zero,
+          ).animate(animation);
+          return FadeTransition(
+            opacity: animation,
+            child: SlideTransition(position: offsetAnimation, child: child),
+          );
+        },
+        child: _showHome || !hasProject
+            ? KeyedSubtree(
+                key: const ValueKey('home-body'),
+                child: MainHomeView(
+                  projects: ProjectService.instance.projects,
+                  onCreateProject: _showCreateProjectDialog,
+                  onOpenProject: _openProject,
+                ),
+              )
+            : KeyedSubtree(
+                key: const ValueKey('workspace-body'),
+                child: _buildWorkspaceBody(),
               ),
-            ),
+      ),
     );
   }
 
-  Widget _buildNoProjectState() {
-    return Center(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(
-            Icons.folder_special_outlined,
-            size: 64,
-            color: Colors.grey.shade400,
-          ),
-          const SizedBox(height: 16),
-          Text(
-            'No project open',
-            style: TextStyle(
-              fontSize: 20,
-              fontWeight: FontWeight.w600,
-              color: Colors.grey.shade700,
-            ),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            'Create a project to get started.',
-            style: TextStyle(fontSize: 14, color: Colors.grey.shade500),
-          ),
-          const SizedBox(height: 24),
-          FilledButton.icon(
-            onPressed: _showCreateProjectDialog,
-            icon: const Icon(Icons.add),
-            label: const Text('Create Project'),
-          ),
-        ],
+  void _openHome() {
+    if (!mounted) return;
+    setState(() => _showHome = true);
+  }
+
+  Future<void> _openProject(Project project) async {
+    await _switchProject(project);
+    if (!mounted) return;
+    setState(() => _showHome = false);
+  }
+
+  Widget _buildWorkspaceBody() {
+    return WorkspaceLayout(
+      isSidebarCollapsed: _isSidebarCollapsed,
+      isChatCollapsed: _isChatCollapsed,
+      onSidebarCollapseChanged: (collapsed) {
+        setState(() => _isSidebarCollapsed = collapsed);
+      },
+      onChatCollapseChanged: (collapsed) {
+        setState(() => _isChatCollapsed = collapsed);
+      },
+      workspaceSidebar: WorkspaceSidebar(
+        selectedPdf: selectedPdf,
+        vaultPath: vaultPath,
+        isLoading: isLoading,
+        paperStatus: _paperStatus,
+        paperCitations: paperCitations,
+        progressLogs: progressLogs,
+        statusText: statusText,
+        isZoteroConfigured: _isZoteroConfigured,
+        isFromZotero: _isFromZotero,
+        activeCollectionKey: _activeCollectionKey,
+        pendingZoteroItemKey: _pendingZoteroItemKey,
+        workspaceSection: _workspaceSection,
+        titleCtrl: _titleCtrl,
+        authorsCtrl: _authorsCtrl,
+        venueCtrl: _venueCtrl,
+        yearCtrl: _yearCtrl,
+        doiCtrl: _doiCtrl,
+        keywordsCtrl: _keywordsCtrl,
+        datasetCtrl: _datasetCtrl,
+        problemCtrl: _problemCtrl,
+        limitationCtrl: _limitationCtrl,
+        summaryCtrl: _summaryCtrl,
+        libraryTabKey: _libraryTabKey,
+        onDiscard: _discardPaper,
+        onPickPdf: _pickPdf,
+        onExtract: _extractPaper,
+        onSave: _saveToObsidian,
+        onImportZotero: _importFromZotero,
+        onExportZotero: _exportToZotero,
+        onOpenPaperFromLibrary: _openPaperFromLibrary,
+        loadLibrary: _loadLibrary,
+        loadZoteroCollection: _activeCollectionKey != null
+            ? _paperController.loadZoteroCollectionWithStatus
+            : null,
+        onImportZoteroItem: _importZoteroItem,
+        onSectionChanged: (index) {
+          setState(() => _workspaceSection = index);
+        },
+        onCollapse: () => setState(() => _isSidebarCollapsed = true),
+        onCancel: _handleCancel,
+      ),
+      pdfPanel: PdfViewerPanel(selectedPdf: selectedPdf),
+      chatPanel: _buildChatPanel(),
+    );
+  }
+
+  Widget _buildChatPanel() {
+    return PanelContainer(
+      padding: EdgeInsets.zero,
+      child: ChatTab(
+        vaultIndexService: _vaultIndexService,
+        bedrockClient: _bedrockClient,
+        showStaleBanner: _indexStale && !_bannerDismissed,
+        onRebuildIndex: _rebuildIndex,
+        onDismissBanner: () => setState(() => _bannerDismissed = true),
+        initialMessages: List.from(_chatHistory[_globalChatKey] ?? []),
+        onMessagesChanged: _onChatMessagesChanged,
+        indexRevision: _indexRevision,
+        onCollapse: () => setState(() => _isChatCollapsed = true),
       ),
     );
   }

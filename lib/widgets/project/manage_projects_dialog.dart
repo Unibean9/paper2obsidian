@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 
-import '../models/project.dart';
-import '../services/project_service.dart';
+import '../common/animated_dialog.dart';
+
+import '../../models/project.dart';
+import '../../services/project_service.dart';
 
 class ManageProjectsDialog extends StatefulWidget {
   const ManageProjectsDialog({
@@ -27,9 +29,9 @@ class _ManageProjectsDialogState extends State<ManageProjectsDialog> {
   }
 
   Future<void> _delete(Project project) async {
-    final confirmed = await showDialog<bool>(
+    final confirmed = await showAnimatedDialog<bool>(
       context: context,
-      builder: (_) => AlertDialog(
+      child: AlertDialog(
         title: const Text('Delete Project'),
         content: Text(
             'Delete "${project.name}"? This only removes the project entry — '
@@ -58,9 +60,9 @@ class _ManageProjectsDialogState extends State<ManageProjectsDialog> {
 
   Future<void> _rename(Project project) async {
     final ctrl = TextEditingController(text: project.name);
-    final newName = await showDialog<String>(
+    final newName = await showAnimatedDialog<String>(
       context: context,
-      builder: (_) => AlertDialog(
+      child: AlertDialog(
         title: const Text('Rename Project'),
         content: TextField(
           controller: ctrl,
@@ -92,9 +94,9 @@ class _ManageProjectsDialogState extends State<ManageProjectsDialog> {
   Future<void> _editCollectionKey(Project project) async {
     final ctrl = TextEditingController(
         text: project.zoteroCollectionKey ?? '');
-    final newKey = await showDialog<String>(
+    final newKey = await showAnimatedDialog<String>(
       context: context,
-      builder: (_) => AlertDialog(
+      child: AlertDialog(
         title: Text('Edit Collection Key — ${project.name}'),
         content: SizedBox(
           width: 360,

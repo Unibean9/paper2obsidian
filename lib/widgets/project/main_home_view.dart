@@ -24,6 +24,7 @@ class MainHomeView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     final sortedProjects = List<Project>.from(projects)
       ..sort((a, b) => b.lastOpenedAt.compareTo(a.lastOpenedAt));
 
@@ -32,23 +33,35 @@ class MainHomeView extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // Elegant Header Title & Subtitle matching Google style
           Text(
-            'Projects',
-            style: Theme.of(context).textTheme.headlineMedium,
+            'My Workspaces',
+            style: theme.textTheme.headlineMedium?.copyWith(
+              fontFamily: 'Cormorant Garamond',
+              fontWeight: FontWeight.w500,
+              letterSpacing: 0.5,
+              fontSize: 32,
+              color: AppColors.textPrimary,
+            ),
           ),
           const SizedBox(height: AppSpacing.sm),
           Text(
-            'Open an existing workspace or create a new one.',
-            style: Theme.of(context).textTheme.bodyMedium,
+            'Access your personal Obsidian research vaults and manage active academic sources.',
+            style: theme.textTheme.bodyMedium?.copyWith(
+              color: AppColors.textSecondary,
+              fontSize: 14,
+            ),
           ),
-          const SizedBox(height: AppSpacing.xl),
+          const SizedBox(height: AppSpacing.section),
+
+          // Grid View of Project Cards
           Expanded(
             child: sortedProjects.isEmpty
                 ? _buildEmptyHomeState()
                 : GridView.builder(
                     gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
                       maxCrossAxisExtent: AppSpacing.hero * 3.8,
-                      mainAxisExtent: AppSpacing.hero * 2.25,
+                      mainAxisExtent: AppSpacing.hero * 2.1,
                       mainAxisSpacing: AppSpacing.xl,
                       crossAxisSpacing: AppSpacing.xl,
                     ),
@@ -105,6 +118,13 @@ class MainHomeView extends StatelessWidget {
         onPressed: onCreateProject,
         icon: const Icon(Icons.add),
         label: const Text('Create Project'),
+        style: FilledButton.styleFrom(
+          backgroundColor: AppColors.accent,
+          foregroundColor: AppColors.textInverse,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(AppRadius.pill),
+          ),
+        ),
       ),
       iconSize: AppSpacing.hero,
     );
@@ -120,54 +140,6 @@ class MainHomeView extends StatelessWidget {
     return HoverProjectCard(
       project: project,
       onTap: () => onOpenProject(project),
-      pathBadge: _buildPathBadge(context, project.vaultPath),
-      metaChip: _buildMetaChip(context, _formatDate(project.lastOpenedAt)),
     );
-  }
-
-  Widget _buildPathBadge(BuildContext context, String path) {
-    final theme = Theme.of(context);
-
-    return Container(
-      padding: const EdgeInsets.symmetric(
-        horizontal: AppSpacing.md,
-        vertical: AppSpacing.sm,
-      ),
-      decoration: BoxDecoration(
-        color: AppColors.surfaceNeutral,
-        border: Border.all(color: AppColors.border),
-        borderRadius: BorderRadius.circular(AppRadius.sm),
-      ),
-      child: Text(
-        path.trim().isNotEmpty ? path.trim() : 'Vault path not configured',
-        style: theme.textTheme.labelSmall,
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-      ),
-    );
-  }
-
-  Widget _buildMetaChip(BuildContext context, String label) {
-    return Container(
-      padding: const EdgeInsets.symmetric(
-        horizontal: AppSpacing.md,
-        vertical: AppSpacing.sm,
-      ),
-      decoration: BoxDecoration(
-        color: AppColors.surfaceLight,
-        border: Border.all(color: AppColors.border),
-        borderRadius: BorderRadius.circular(AppRadius.sm),
-      ),
-      child: Text(
-        label,
-        style: Theme.of(context).textTheme.bodySmall,
-      ),
-    );
-  }
-
-  String _formatDate(DateTime value) {
-    final day = value.day.toString().padLeft(2, '0');
-    final month = value.month.toString().padLeft(2, '0');
-    return '$day/$month/${value.year}';
   }
 }

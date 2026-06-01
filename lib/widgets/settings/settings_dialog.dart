@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:path/path.dart' as p;
 
+import '../common/animated_dialog.dart';
+
 import '../../config/env_config.dart';
 import '../../services/project_service.dart';
 import '../../services/zotero_service.dart';
@@ -173,9 +175,9 @@ class _SettingsDialogState extends State<SettingsDialog> {
   }
 
   void _openManageProjects() {
-    showDialog(
+    showAnimatedDialog(
       context: context,
-      builder: (_) => ManageProjectsDialog(
+      child: ManageProjectsDialog(
         activeProjectId: ProjectService.instance.activeProject?.id,
         onProjectsChanged: () => widget.onProjectsChanged?.call(),
       ),

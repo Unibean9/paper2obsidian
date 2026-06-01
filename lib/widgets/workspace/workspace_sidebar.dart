@@ -9,13 +9,12 @@ import '../../theme/app_colors.dart';
 import '../../theme/app_radius.dart';
 import '../../theme/app_shadows.dart';
 import '../../theme/app_spacing.dart';
-import '../../widgets/common/panel_container.dart';
-import '../../widgets/workspace/sidebar_active_paper_box.dart';
-import '../../widgets/workspace/sidebar_status_box.dart';
-import '../../widgets/workspace/upload_zone.dart';
-import '../../widgets/workspace/metadata_tab.dart';
-import '../../widgets/workspace/citations_tab.dart';
-import '../../widgets/workspace/library_tab.dart';
+import '../common/panel_container.dart';
+import 'analysis_briefing_view.dart';
+import 'library_tab.dart';
+import 'sidebar_active_paper_box.dart';
+import 'sidebar_status_box.dart';
+import 'upload_zone.dart';
 
 class WorkspaceSidebar extends StatelessWidget {
   const WorkspaceSidebar({
@@ -98,99 +97,245 @@ class WorkspaceSidebar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final selectedTitle = titleCtrl.text.trim().isNotEmpty
-        ? titleCtrl.text.trim()
-        : selectedPdf != null
-            ? p.basename(selectedPdf!.path)
-            : '';
+
+    // Map 2 (Library) to 0 (Sources) to fit the double tab layout
+    final activeTab = workspaceSection == 2 ? 0 : workspaceSection;
 
     return PanelContainer(
       padding: EdgeInsets.zero,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
+          // Sidebar Header with collapse button
           Padding(
             padding: const EdgeInsets.fromLTRB(
               AppSpacing.lg,
               AppSpacing.lg,
-              AppSpacing.md,
               AppSpacing.lg,
+              AppSpacing.xs,
             ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
+                Text(
+                  'WORKSPACE',
+                  style: theme.textTheme.titleSmall?.copyWith(
+                    fontWeight: FontWeight.bold,
+                    letterSpacing: 2.0,
+                  ),
+                ),
+                Tooltip(
+                  message: 'Collapse workspace',
+                  child: GestureDetector(
+                    onTap: onCollapse,
+                    child: const MouseRegion(
+                      cursor: SystemMouseCursors.click,
+                      child: Icon(
+                        Icons.keyboard_double_arrow_left,
+                        size: 18,
+                        color: AppColors.textSecondary,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+
+          // Double Tab Switcher: Sources & Analysis
+          _buildNotebookLMTabBar(context, activeTab),
+          const Divider(height: 1),
+
+          // Core Tab View Content
+          Expanded(
+            child: AnimatedSwitcher(
+              duration: const Duration(milliseconds: 220),
+              switchInCurve: Curves.easeOutCubic,
+              switchOutCurve: Curves.easeInCubic,
+              child: KeyedSubtree(
+                key: ValueKey(activeTab),
+                child: activeTab == 0
+                    ? _buildSourcesTabContent(context)
+                    : _buildAnalysisTabContent(theme),
+              ),
+            ),
+          ),
+
+          // Sticky status logs box if extracting or status loading
+          if (progressLogs.isNotEmpty || statusText != 'Ready') ...[
+            const Divider(height: 1),
+            Padding(
+              padding: const EdgeInsets.all(AppSpacing.md),
+              child: SidebarStatusBox(
+                statusText: statusText,
+                progressLogs: progressLogs,
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  // Modern pill-shaped tab bar matching Google NotebookLM layout
+  Widget _buildNotebookLMTabBar(BuildContext context, int activeTab) {
+    return Container(
+      margin: const EdgeInsets.symmetric(
+        horizontal: AppSpacing.lg,
+        vertical: AppSpacing.md,
+      ),
+      padding: const EdgeInsets.all(4),
+      decoration: BoxDecoration(
+        color: AppColors.surfaceNeutral,
+        borderRadius: BorderRadius.circular(AppRadius.md),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: _buildNotebookLMTabItem(
+              context: context,
+              index: 0,
+              label: 'Sources',
+              icon: Icons.source_outlined,
+              isSelected: activeTab == 0,
+            ),
+          ),
+          Expanded(
+            child: _buildNotebookLMTabItem(
+              context: context,
+              index: 1,
+              label: 'Analysis',
+              icon: Icons.auto_awesome_outlined,
+              isSelected: activeTab == 1,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildNotebookLMTabItem({
+    required BuildContext context,
+    required int index,
+    required String label,
+    required IconData icon,
+    required bool isSelected,
+  }) {
+    return GestureDetector(
+      onTap: () => onSectionChanged(index),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
+        curve: Curves.easeOutCubic,
+        padding: const EdgeInsets.symmetric(vertical: AppSpacing.sm + 1),
+        decoration: BoxDecoration(
+          color: isSelected ? AppColors.surfaceLight : Colors.transparent,
+          borderRadius: BorderRadius.circular(AppRadius.md - 2),
+          boxShadow: isSelected ? AppShadows.subtle : null,
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              icon,
+              size: 14,
+              color: isSelected ? AppColors.accent : AppColors.textSecondary,
+            ),
+            const SizedBox(width: 8),
+            Text(
+              label,
+              style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                    color: isSelected ? AppColors.textPrimary : AppColors.textSecondary,
+                    fontWeight: isSelected ? FontWeight.w600 : FontWeight.w400,
+                    fontSize: 12,
+                  ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // --- TAB 1: SOURCES TAB CONTENT ---
+  Widget _buildSourcesTabContent(BuildContext context) {
+    final theme = Theme.of(context);
+    final selectedTitle = titleCtrl.text.trim().isNotEmpty
+        ? titleCtrl.text.trim()
+        : selectedPdf != null
+            ? p.basename(selectedPdf!.path)
+            : '';
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        // Upper section: Upload zone or Active paper box
+        Padding(
+          padding: const EdgeInsets.fromLTRB(
+            AppSpacing.lg,
+            0,
+            AppSpacing.lg,
+            AppSpacing.md,
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(
+                selectedPdf == null ? 'ADD SOURCE' : 'ACTIVE SOURCE',
+                style: theme.textTheme.titleSmall?.copyWith(
+                  fontSize: 10,
+                  color: AppColors.textSecondary,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              const SizedBox(height: AppSpacing.sm),
+              AnimatedSwitcher(
+                duration: const Duration(milliseconds: 220),
+                child: selectedPdf == null
+                    ? _buildDottedUploadZone()
+                    : SidebarActivePaperBox(
+                        title: selectedTitle,
+                        vaultPath: vaultPath,
+                        isLoading: isLoading,
+                        onDiscard: onDiscard,
+                        onChange: onPickPdf,
+                      ),
+              ),
+
+              // Action buttons below Active Paper Box
+              if (selectedPdf != null) ...[
+                const SizedBox(height: AppSpacing.md),
                 Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Text('WORKSPACE', style: theme.textTheme.titleSmall),
-                    Tooltip(
-                      message: 'Thu gọn workspace',
-                      child: GestureDetector(
-                        onTap: onCollapse,
-                        child: const MouseRegion(
-                          cursor: SystemMouseCursors.click,
-                          child: Icon(
-                            Icons.keyboard_double_arrow_left,
-                            size: 18,
-                            color: AppColors.textSecondary,
-                          ),
-                        ),
+                    Expanded(
+                      child: _buildSidebarActionButton(
+                        icon: paperStatus == PaperStatus.extracting
+                            ? Icons.stop_circle_outlined
+                            : Icons.auto_awesome,
+                        label: paperStatus == PaperStatus.extracting
+                            ? 'Cancel'
+                            : 'Extract AI',
+                        onPressed: paperStatus == PaperStatus.extracting
+                            ? onCancel
+                            : (isLoading ? null : onExtract),
+                        filled: paperStatus == PaperStatus.uploaded,
+                      ),
+                    ),
+                    const SizedBox(width: AppSpacing.sm),
+                    Expanded(
+                      child: _buildSidebarActionButton(
+                        icon: Icons.save_alt_outlined,
+                        label: 'Save Obsidian',
+                        onPressed: paperStatus == PaperStatus.done &&
+                                !isLoading &&
+                                vaultPath.trim().isNotEmpty
+                            ? onSave
+                            : null,
+                        filled: paperStatus == PaperStatus.done,
                       ),
                     ),
                   ],
                 ),
-                const SizedBox(height: AppSpacing.md),
-                AnimatedSwitcher(
-                  duration: const Duration(milliseconds: 220),
-                  switchInCurve: Curves.easeOutCubic,
-                  switchOutCurve: Curves.easeInCubic,
-                  child: selectedPdf == null
-                      ? _buildDottedUploadZone()
-                      : SidebarActivePaperBox(
-                          title: selectedTitle,
-                          vaultPath: vaultPath,
-                          isLoading: isLoading,
-                          onDiscard: onDiscard,
-                          onChange: onPickPdf,
-                        ),
-                ),
-                const SizedBox(height: AppSpacing.lg),
-                // Nút trích xuất và lưu
-                if (selectedPdf != null) ...[
-                  Row(
-                    children: [
-                      Expanded(
-                        child: _buildSidebarActionButton(
-                          icon: paperStatus == PaperStatus.extracting
-                              ? Icons.stop_circle_outlined
-                              : Icons.auto_awesome,
-                          label: paperStatus == PaperStatus.extracting
-                              ? 'Cancel'
-                              : 'Extract AI',
-                          onPressed: paperStatus == PaperStatus.extracting
-                              ? onCancel
-                              : (isLoading ? null : onExtract),
-                          filled: paperStatus == PaperStatus.uploaded,
-                        ),
-                      ),
-                      const SizedBox(width: AppSpacing.sm),
-                      Expanded(
-                        child: _buildSidebarActionButton(
-                          icon: Icons.save_alt,
-                          label: 'Save Obsidian',
-                          onPressed: paperStatus == PaperStatus.done &&
-                                  !isLoading &&
-                                  vaultPath.trim().isNotEmpty
-                              ? onSave
-                              : null,
-                          filled: paperStatus == PaperStatus.done,
-                        ),
-                      ),
-                    ],
-                  ),
+                if (isZoteroConfigured) ...[
                   const SizedBox(height: AppSpacing.sm),
-                ],
-                if (isZoteroConfigured && selectedPdf != null) ...[
                   Row(
                     children: [
                       Expanded(
@@ -219,35 +364,32 @@ class WorkspaceSidebar extends StatelessWidget {
                   ),
                 ],
               ],
+            ],
+          ),
+        ),
+
+        const Divider(height: 1),
+
+        // Lower section: LibraryTab (All Sources list)
+        Expanded(
+          child: Container(
+            color: AppColors.background.withValues(alpha: 0.1),
+            child: LibraryTab(
+              key: libraryTabKey,
+              vaultPath: vaultPath,
+              onOpenPaper: onOpenPaperFromLibrary,
+              loadLibrary: loadLibrary,
+              isZoteroConfigured: isZoteroConfigured,
+              activeCollectionKey: activeCollectionKey,
+              loadZoteroCollection: activeCollectionKey != null
+                  ? loadZoteroCollection
+                  : null,
+              onImportZoteroItem: onImportZoteroItem,
+              pendingZoteroItemKey: pendingZoteroItemKey,
             ),
           ),
-          const Divider(height: 1),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(
-              AppSpacing.lg,
-              AppSpacing.md,
-              AppSpacing.lg,
-              AppSpacing.xs,
-            ),
-            child: Text('PANELS', style: theme.textTheme.titleSmall),
-          ),
-          _buildHorizontalTabBar(context),
-          const SizedBox(height: AppSpacing.xs),
-          const Divider(height: 1),
-          Expanded(child: _buildSidebarSectionContent()),
-          if (progressLogs.isNotEmpty ||
-              statusText != 'Ready') ...[
-            const Divider(height: 1),
-            Padding(
-              padding: const EdgeInsets.all(AppSpacing.md),
-              child: SidebarStatusBox(
-                statusText: statusText,
-                progressLogs: progressLogs,
-              ),
-            ),
-          ],
-        ],
-      ),
+        ),
+      ],
     );
   }
 
@@ -256,63 +398,6 @@ class WorkspaceSidebar extends StatelessWidget {
       onTap: isLoading ? null : onPickPdf,
       zoteroAvailable: isZoteroConfigured && activeCollectionKey != null,
       onZoteroTap: onImportZotero,
-    );
-  }
-
-  Widget _buildHorizontalTabBar(BuildContext context) {
-    return Container(
-      margin: const EdgeInsets.symmetric(
-        horizontal: AppSpacing.lg,
-        vertical: AppSpacing.sm,
-      ),
-      padding: const EdgeInsets.all(4),
-      decoration: BoxDecoration(
-        color: AppColors.surfaceNeutral,
-        borderRadius: BorderRadius.circular(AppRadius.md),
-      ),
-      child: Row(
-        children: [
-          Expanded(child: _buildTabItem(context, 0, 'Metadata', Icons.auto_awesome)),
-          Expanded(child: _buildTabItem(context, 1, 'Citations', Icons.format_quote)),
-          Expanded(child: _buildTabItem(context, 2, 'Library', Icons.local_library)),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildTabItem(BuildContext context, int index, String label, IconData icon) {
-    final isSelected = workspaceSection == index;
-    return GestureDetector(
-      onTap: () => onSectionChanged(index),
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 200),
-        curve: Curves.easeOutCubic,
-        padding: const EdgeInsets.symmetric(vertical: 8),
-        decoration: BoxDecoration(
-          color: isSelected ? AppColors.surfaceLight : Colors.transparent,
-          borderRadius: BorderRadius.circular(AppRadius.md - 2),
-          boxShadow: isSelected ? AppShadows.subtle : null,
-        ),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(
-              icon,
-              size: 14,
-              color: isSelected ? AppColors.primary : AppColors.textSecondary,
-            ),
-            const SizedBox(width: 6),
-            Text(
-              label,
-              style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                    color: isSelected ? AppColors.textPrimary : AppColors.textSecondary,
-                    fontWeight: isSelected ? FontWeight.w600 : FontWeight.w400,
-                    fontSize: 12,
-                  ),
-            ),
-          ],
-        ),
-      ),
     );
   }
 
@@ -325,79 +410,90 @@ class WorkspaceSidebar extends StatelessWidget {
     final child = filled
         ? FilledButton.icon(
             onPressed: onPressed,
-            icon: Icon(icon, size: 15),
-            label: Text(label),
+            icon: Icon(icon, size: 14),
+            label: Text(label, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600)),
             style: FilledButton.styleFrom(
-              padding: const EdgeInsets.symmetric(vertical: AppSpacing.sm),
+              padding: const EdgeInsets.symmetric(vertical: AppSpacing.md),
+              backgroundColor: AppColors.accent,
+              foregroundColor: AppColors.textInverse,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(AppRadius.sm),
+              ),
             ),
           )
         : OutlinedButton.icon(
             onPressed: onPressed,
-            icon: Icon(icon, size: 15),
-            label: Text(label),
+            icon: Icon(icon, size: 14),
+            label: Text(label, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600)),
             style: OutlinedButton.styleFrom(
-              padding: const EdgeInsets.symmetric(vertical: AppSpacing.sm),
+              padding: const EdgeInsets.symmetric(vertical: AppSpacing.md),
+              foregroundColor: AppColors.accent,
+              side: const BorderSide(color: AppColors.border),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(AppRadius.sm),
+              ),
             ),
           );
 
     return SizedBox(width: double.infinity, child: child);
   }
 
-  Widget _buildSidebarSectionContent() {
-    return AnimatedSwitcher(
-      duration: const Duration(milliseconds: 220),
-      switchInCurve: Curves.easeOutCubic,
-      switchOutCurve: Curves.easeInCubic,
-      transitionBuilder: (child, animation) {
-        final offsetAnimation = Tween<Offset>(
-          begin: const Offset(0.015, 0),
-          end: Offset.zero,
-        ).animate(animation);
-        return FadeTransition(
-          opacity: animation,
-          child: SlideTransition(position: offsetAnimation, child: child),
-        );
-      },
-      child: KeyedSubtree(
-        key: ValueKey(workspaceSection),
-        child: _buildWorkspaceSectionView(),
-      ),
-    );
-  }
-
-  Widget _buildWorkspaceSectionView() {
-    switch (workspaceSection) {
-      case 0:
-        return MetadataTab(
-          titleCtrl: titleCtrl,
-          authorsCtrl: authorsCtrl,
-          venueCtrl: venueCtrl,
-          yearCtrl: yearCtrl,
-          doiCtrl: doiCtrl,
-          keywordsCtrl: keywordsCtrl,
-          datasetCtrl: datasetCtrl,
-          problemCtrl: problemCtrl,
-          limitationCtrl: limitationCtrl,
-          summaryCtrl: summaryCtrl,
-        );
-      case 1:
-        return CitationsTab(citations: paperCitations);
-      case 2:
-        return LibraryTab(
-          key: libraryTabKey,
-          vaultPath: vaultPath,
-          onOpenPaper: onOpenPaperFromLibrary,
-          loadLibrary: loadLibrary,
-          isZoteroConfigured: isZoteroConfigured,
-          activeCollectionKey: activeCollectionKey,
-          loadZoteroCollection: activeCollectionKey != null
-              ? loadZoteroCollection
-              : null,
-          onImportZoteroItem: onImportZoteroItem,
-          pendingZoteroItemKey: pendingZoteroItemKey,
-        );
-      default:
-        return const SizedBox.shrink();
+  // --- TAB 2: ANALYSIS TAB CONTENT ---
+  Widget _buildAnalysisTabContent(ThemeData theme) {
+    if (selectedPdf == null) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(AppSpacing.xxl),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                padding: const EdgeInsets.all(AppSpacing.lg),
+                decoration: const BoxDecoration(
+                  color: AppColors.surfaceNeutral,
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(
+                  Icons.auto_awesome,
+                  size: 32,
+                  color: AppColors.accent,
+                ),
+              ),
+              const SizedBox(height: AppSpacing.lg),
+              Text(
+                'No source active',
+                style: theme.textTheme.titleMedium?.copyWith(
+                  fontWeight: FontWeight.bold,
+                  color: AppColors.textPrimary,
+                ),
+              ),
+              const SizedBox(height: AppSpacing.sm),
+              Text(
+                'Please upload a document or select a paper from the Library below to view the analysis summary.',
+                style: theme.textTheme.bodySmall?.copyWith(
+                  fontSize: 12,
+                  color: AppColors.textSecondary,
+                ),
+                textAlign: TextAlign.center,
+              ),
+            ],
+          ),
+        ),
+      );
     }
+
+    return AnalysisBriefingView(
+      titleCtrl: titleCtrl,
+      authorsCtrl: authorsCtrl,
+      venueCtrl: venueCtrl,
+      yearCtrl: yearCtrl,
+      doiCtrl: doiCtrl,
+      keywordsCtrl: keywordsCtrl,
+      datasetCtrl: datasetCtrl,
+      problemCtrl: problemCtrl,
+      limitationCtrl: limitationCtrl,
+      summaryCtrl: summaryCtrl,
+      citations: paperCitations,
+    );
   }
 }

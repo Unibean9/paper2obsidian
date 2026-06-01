@@ -2,6 +2,7 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../common/animated_dialog.dart';
 import '../../services/bedrock_client.dart';
 import '../../services/vault_index_service.dart';
 import '../../theme/app_colors.dart';
@@ -146,10 +147,9 @@ class _ChatTabState extends State<ChatTab> with AutomaticKeepAliveClientMixin {
       }
 
       final exampleCites = List.generate(chunks.length, (i) => '[${i + 1}]').join(', ');
-      final langInstruction = _outputLanguage == 'vi' ? '\nRespond entirely in Vietnamese.' : '';
 
       final systemPrompt =
-          'You are a research assistant.$langInstruction\n'
+          'You are a research assistant.\n'
           'Use ONLY the numbered sources below to answer the question.\n'
           'After each claim or sentence that references a source, cite it '
           'with its number in brackets, e.g. [1] or [2].\n'
@@ -199,7 +199,36 @@ class _ChatTabState extends State<ChatTab> with AutomaticKeepAliveClientMixin {
             'Configure AWS credentials for better results.\n\n$response';
       }
 
-      _addAssistantMessage(response, sources: sourcesList);
+      String? translatedContent;
+      if (_outputLanguage == 'vi') {
+        try {
+          final translationPrompt = 
+              'You are an expert academic translator specializing in computer science and scientific papers.\n'
+              'Translate the following research assistant response ENTIRELY into natural, fluent, and grammatically correct Vietnamese (Tiếng Việt).\n'
+              'CRITICAL RULES:\n'
+              '1. Keep all in-text citation brackets EXACTLY as they are (e.g. [1], [2], [1, 2]) and do NOT translate or remove them.\n'
+              '2. Preserve formatting, lists, bold text, and line breaks.\n'
+              '3. Do NOT add any introductory or concluding comments like "Here is the translation:". Just output the translated text.\n'
+              '4. Keep technical terms in English if they are widely used (e.g. "transformer", "neural network", "embeddings") but translate the surrounding explanation to Vietnamese.\n'
+              '\nTEXT TO TRANSLATE:\n$response';
+
+          translatedContent = await widget.bedrockClient.converse(
+            systemPrompt: 'You are a professional translator. Output only the direct translation.',
+            userMessage: translationPrompt,
+            temperature: 0.1,
+          );
+          translatedContent = translatedContent.trim();
+        } catch (e) {
+          translatedContent = '⚠️ Tự động dịch lỗi: $e';
+        }
+      }
+
+      _addAssistantMessage(
+        response,
+        sources: sourcesList,
+        translatedContent: translatedContent,
+        showTranslation: _outputLanguage == 'vi',
+      );
     } catch (e) {
       _addAssistantMessage('Error: $e');
     } finally {
@@ -211,9 +240,18 @@ class _ChatTabState extends State<ChatTab> with AutomaticKeepAliveClientMixin {
   void _addAssistantMessage(
     String content, {
     List<Map<String, String>>? sources,
+    String? translatedContent,
+    bool showTranslation = false,
   }) {
     if (!mounted) return;
-    final msg = <String, dynamic>{'role': 'assistant', 'content': content};
+    final msg = <String, dynamic>{
+      'role': 'assistant',
+      'content': content,
+      if (showTranslation) 'show_translation': showTranslation,
+    };
+    if (translatedContent != null) {
+      msg['translated_content'] = translatedContent;
+    }
     if (sources != null) msg['sources'] = sources;
     setState(() => _messages.add(msg));
     widget.onMessagesChanged?.call(List.from(_messages));
@@ -412,9 +450,9 @@ class _ChatTabState extends State<ChatTab> with AutomaticKeepAliveClientMixin {
 
   void _clearChat() {
     if (_messages.isEmpty) return;
-    showDialog<bool>(
+    showAnimatedDialog<bool>(
       context: context,
-      builder: (_) => AlertDialog(
+      child: AlertDialog(
         title: const Text('Clear chat?'),
         content: const Text(
           'All messages in this conversation will be removed.',
@@ -466,6 +504,142 @@ class _ChatTabState extends State<ChatTab> with AutomaticKeepAliveClientMixin {
       }
     }
     return -1;
+  }
+
+  Future<void> _translateMessage(int index) async {
+    final msg = _messages[index];
+    final content = msg['content'] as String;
+
+    setState(() {
+      msg['is_translating'] = true;
+      msg['show_translation'] = true;
+    });
+
+    try {
+      final translationPrompt = 
+          'You are an expert academic translator specializing in computer science and scientific papers.\n'
+          'Translate the following research assistant response ENTIRELY into natural, fluent, and grammatically correct Vietnamese (Tiếng Việt).\n'
+          'CRITICAL RULES:\n'
+          '1. Keep all in-text citation brackets EXACTLY as they are (e.g. [1], [2], [1, 2]) and do NOT translate or remove them.\n'
+          '2. Preserve formatting, lists, bold text, and line breaks.\n'
+          '3. Do NOT add any introductory or concluding comments like "Here is the translation:". Just output the translated text.\n'
+          '4. Keep technical terms in English if they are widely used (e.g. "transformer", "neural network", "embeddings") but translate the surrounding explanation to Vietnamese.\n'
+          '\nTEXT TO TRANSLATE:\n$content';
+
+      final translated = await widget.bedrockClient.converse(
+        systemPrompt: 'You are a professional translator. Output only the direct translation.',
+        userMessage: translationPrompt,
+        temperature: 0.1,
+      );
+
+      if (mounted) {
+        setState(() {
+          msg['translated_content'] = translated.trim();
+          msg['is_translating'] = false;
+        });
+        widget.onMessagesChanged?.call(List.from(_messages));
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          msg['is_translating'] = false;
+          msg['translated_content'] = '⚠️ Lỗi dịch thuật: $e';
+        });
+      }
+    }
+  }
+
+  Widget _buildTranslationActionBar(int index) {
+    final theme = Theme.of(context);
+    final msg = _messages[index];
+    final isTranslating = msg['is_translating'] == true;
+    final hasTranslation = msg['translated_content'] != null;
+    final showTranslation = msg['show_translation'] == true;
+
+    return Padding(
+      padding: const EdgeInsets.only(left: AppSpacing.sm, top: AppSpacing.xs),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (isTranslating) ...[
+            const SizedBox(
+              width: 10,
+              height: 10,
+              child: CircularProgressIndicator(
+                strokeWidth: 1.5,
+                color: AppColors.accent,
+              ),
+            ),
+            const SizedBox(width: 6),
+            Text(
+              'Đang dịch...',
+              style: theme.textTheme.bodySmall?.copyWith(
+                fontSize: 11,
+                color: AppColors.accent,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ] else if (hasTranslation) ...[
+            GestureDetector(
+              onTap: () {
+                setState(() {
+                  msg['show_translation'] = !showTranslation;
+                });
+                widget.onMessagesChanged?.call(List.from(_messages));
+              },
+              child: MouseRegion(
+                cursor: SystemMouseCursors.click,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      showTranslation ? Icons.g_translate_rounded : Icons.translate_rounded,
+                      size: 12,
+                      color: AppColors.accent,
+                    ),
+                    const SizedBox(width: 4),
+                    Text(
+                      showTranslation ? 'Xem bản gốc (EN)' : 'Xem bản dịch (VI)',
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        fontSize: 11,
+                        color: AppColors.accent,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ] else ...[
+            GestureDetector(
+              onTap: () => _translateMessage(index),
+              child: MouseRegion(
+                cursor: SystemMouseCursors.click,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(
+                      Icons.translate_rounded,
+                      size: 12,
+                      color: AppColors.textSecondary,
+                    ),
+                    const SizedBox(width: 4),
+                    Text(
+                      'Dịch sang Tiếng Việt',
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        fontSize: 11,
+                        color: AppColors.textSecondary,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
   }
 
   Widget _buildSelectedPaperChip(BuildContext context, String title) {
@@ -866,12 +1040,18 @@ class _ChatTabState extends State<ChatTab> with AutomaticKeepAliveClientMixin {
                 itemCount: _messages.length,
                 itemBuilder: (context, index) {
                   final msg = _messages[index];
-                  final isUser = msg['role'] == 'user';
-                  final content = msg['content'] as String? ?? '';
+                  final role = msg['role'] as String;
+                  final content = msg['content'] as String;
+                  final isUser = role == 'user';
                   final sources = (msg['sources'] as List?)
-                          ?.map((s) => Map<String, String>.from(s as Map))
+                          ?.map((e) => Map<String, String>.from(e as Map))
                           .toList() ??
-                      const [];
+                      [];
+                  final showTranslation = msg['show_translation'] == true;
+                  final displayContent = showTranslation
+                      ? (msg['translated_content'] as String? ?? content)
+                      : content;
+
                   return Padding(
                     key: ValueKey(index),
                     padding: const EdgeInsets.only(bottom: AppSpacing.md),
@@ -934,11 +1114,15 @@ class _ChatTabState extends State<ChatTab> with AutomaticKeepAliveClientMixin {
                                         ),
                                       )
                                     : _AssistantMessageWidget(
-                                        key: ValueKey('msg_$index'),
-                                        content: content,
+                                        key: ValueKey('msg_${index}_$showTranslation'),
+                                        content: displayContent,
                                         sources: sources,
                                       ),
                               ),
+                              if (!isUser) ...[
+                                const SizedBox(height: 4),
+                                _buildTranslationActionBar(index),
+                              ],
                               if (!isUser && index == lastAssistantIndex && !_isLoading) ...[
                                 const SizedBox(height: AppSpacing.md),
                                 ConstrainedBox(
@@ -1238,9 +1422,9 @@ class _AssistantMessageWidgetState extends State<_AssistantMessageWidget> {
     final idx = n - 1;
     final source = (idx >= 0 && idx < widget.sources.length) ? widget.sources[idx] : null;
 
-    showDialog<void>(
+    showAnimatedDialog<void>(
       context: context,
-      builder: (_) => AlertDialog(
+      child: AlertDialog(
         title: Text('Source [$n]'),
         content: source != null
             ? Column(

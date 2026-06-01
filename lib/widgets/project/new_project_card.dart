@@ -28,17 +28,17 @@ class _HoverNewProjectCardState extends State<HoverNewProjectCard> {
       onEnter: (_) => setState(() => _isHovered = true),
       onExit: (_) => setState(() => _isHovered = false),
       child: AnimatedContainer(
-        duration: const Duration(milliseconds: 200),
+        duration: const Duration(milliseconds: 220),
         curve: Curves.easeOutCubic,
-        transform: Matrix4.translationValues(0.0, _isHovered ? -5.0 : 0.0, 0.0),
+        transform: Matrix4.translationValues(0.0, _isHovered ? -6.0 : 0.0, 0.0),
         decoration: BoxDecoration(
-          color: _isHovered ? AppColors.surfaceLight.withValues(alpha: 0.8) : Colors.transparent,
+          color: _isHovered ? AppColors.surfaceLight : Colors.transparent,
           borderRadius: BorderRadius.circular(AppRadius.md),
           boxShadow: _isHovered ? AppShadows.medium : AppShadows.none,
         ),
         child: CustomPaint(
           painter: DashedBorderPainter(
-            color: _isHovered ? AppColors.primary : AppColors.border,
+            color: _isHovered ? AppColors.accent : AppColors.border,
             radius: AppRadius.md,
             strokeWidth: 1.5,
           ),
@@ -50,28 +50,32 @@ class _HoverNewProjectCardState extends State<HoverNewProjectCard> {
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
+                  // Animated Plus Button Ring
                   AnimatedContainer(
-                    duration: const Duration(milliseconds: 200),
-                    width: AppSpacing.hero,
-                    height: AppSpacing.hero,
+                    duration: const Duration(milliseconds: 220),
+                    curve: Curves.easeOutCubic,
+                    width: _isHovered ? 64 : 56,
+                    height: _isHovered ? 64 : 56,
                     decoration: BoxDecoration(
                       color: _isHovered
-                          ? AppColors.primary
-                          : AppColors.surfaceLight,
-                      borderRadius: BorderRadius.circular(AppRadius.md),
+                          ? AppColors.accent
+                          : AppColors.surfaceNeutral.withValues(alpha: 0.8),
+                      shape: BoxShape.circle,
                       boxShadow: _isHovered ? AppShadows.glow : AppShadows.subtle,
                     ),
                     child: Icon(
                       Icons.add,
-                      size: AppSpacing.xxl,
-                      color: _isHovered ? AppColors.textInverse : AppColors.primary,
+                      size: _isHovered ? 26 : 22,
+                      color: _isHovered ? AppColors.textInverse : AppColors.textPrimary,
                     ),
                   ),
-                  const SizedBox(height: AppSpacing.xl),
+                  const SizedBox(height: AppSpacing.lg),
                   Text(
                     'Create new project',
                     style: theme.textTheme.titleMedium?.copyWith(
                       fontWeight: FontWeight.w600,
+                      color: _isHovered ? AppColors.accent : AppColors.textPrimary,
+                      fontSize: 14,
                     ),
                     textAlign: TextAlign.center,
                   ),

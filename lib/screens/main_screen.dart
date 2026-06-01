@@ -33,6 +33,7 @@ import '../widgets/workspace/workspace_layout.dart';
 import '../widgets/workspace/workspace_header.dart';
 import '../widgets/workspace/library_tab.dart';
 import '../widgets/common/panel_container.dart';
+import '../widgets/common/animated_dialog.dart';
 
 class MainScreen extends StatefulWidget {
   const MainScreen({super.key});
@@ -348,9 +349,9 @@ class _MainScreenState extends State<MainScreen> {
   }
 
   void _showSettingsDialog(BuildContext context) {
-    showDialog(
+    showAnimatedDialog(
       context: context,
-      builder: (_) => SettingsDialog(
+      child: SettingsDialog(
         initialVaultPath: vaultPath,
         onSave: (newPath) async {
           await _applyVaultPath(newPath);
@@ -669,9 +670,9 @@ class _MainScreenState extends State<MainScreen> {
   }
 
   void _showCreateProjectDialog() {
-    showDialog(
+    showAnimatedDialog(
       context: context,
-      builder: (_) => CreateProjectDialog(
+      child: CreateProjectDialog(
         onCreated: (project) async {
           await _openProject(project);
         },
@@ -693,9 +694,9 @@ class _MainScreenState extends State<MainScreen> {
       final items = await _paperController.listZoteroItems(collectionKey);
       if (!mounted) return;
 
-      final picked = await showDialog<dynamic>(
+      final picked = await showAnimatedDialog<dynamic>(
         context: context,
-        builder: (_) =>
+        child:
             ZoteroItemPickerDialog(items: items, collectionName: collectionKey),
       );
       if (picked == null || !mounted) return;

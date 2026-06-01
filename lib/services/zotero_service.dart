@@ -255,8 +255,8 @@ class ZoteroService {
         'itemType': 'journalArticle',
         'title': title,
         'creators': creatorList,
-        if (year != null) 'date': year,
-        if (doi != null) 'DOI': doi,
+        'date': ?year,
+        'DOI': ?doi,
         'collections': [collectionKey],
         'tags': [],
       }

@@ -1,7 +1,11 @@
 import 'package:flutter/material.dart';
 
-import '../constants/messages.dart';
-import '../models/zotero_item.dart';
+import '../../constants/messages.dart';
+import '../../models/zotero_item.dart';
+import '../../theme/app_colors.dart';
+import '../../theme/app_radius.dart';
+import '../../theme/app_spacing.dart';
+import '../common/app_empty_state.dart';
 
 class LibraryTab extends StatefulWidget {
   const LibraryTab({
@@ -9,7 +13,6 @@ class LibraryTab extends StatefulWidget {
     required this.vaultPath,
     required this.onOpenPaper,
     required this.loadLibrary,
-    required this.primaryColor,
     this.isZoteroConfigured = false,
     this.activeCollectionKey,
     this.loadZoteroCollection,
@@ -20,20 +23,14 @@ class LibraryTab extends StatefulWidget {
   final String vaultPath;
   final Future<void> Function(String mdPath) onOpenPaper;
   final Future<List<Map<String, String>>> Function() loadLibrary;
-  final Color primaryColor;
 
   final bool isZoteroConfigured;
   final String? activeCollectionKey;
-
-  /// Returns list of (item, isLocal) pairs from the Zotero collection.
   final Future<List<({ZoteroItem item, bool isLocal})>> Function(
-      String collectionKey)? loadZoteroCollection;
-
-  /// Called when user taps Import on a Zotero item.
+    String collectionKey,
+  )?
+  loadZoteroCollection;
   final Future<void> Function(ZoteroItem item)? onImportZoteroItem;
-
-  /// Key of a Zotero item imported but not yet saved to Obsidian.
-  /// Its Import button is disabled to prevent duplicate downloads.
   final String? pendingZoteroItemKey;
 
   @override
@@ -41,14 +38,11 @@ class LibraryTab extends StatefulWidget {
 }
 
 class LibraryTabState extends State<LibraryTab> {
-  // 0 = Local, 1 = Zotero
   int _activeSection = 0;
 
-  // Local section state
   List<Map<String, String>> _localPapers = [];
   bool _isLoadingLocal = false;
 
-  // Zotero section state
   List<({ZoteroItem item, bool isLocal})> _zoteroItems = [];
   bool _isLoadingZotero = false;
   String? _zoteroError;
@@ -77,10 +71,9 @@ class LibraryTabState extends State<LibraryTab> {
 
     final collectionChanged =
         widget.activeCollectionKey != oldWidget.activeCollectionKey ||
-            widget.isZoteroConfigured != oldWidget.isZoteroConfigured;
+        widget.isZoteroConfigured != oldWidget.isZoteroConfigured;
 
     if (collectionChanged) {
-      // If Zotero panel just became unavailable, snap back to Local
       if (!_showZotero && _activeSection == 1) {
         setState(() => _activeSection = 0);
       }
@@ -88,7 +81,6 @@ class LibraryTabState extends State<LibraryTab> {
     }
   }
 
-  // Called by MainScreen after save-to-obsidian to refresh both lists.
   void refresh() {
     _refreshLocal();
     if (_showZotero) _refreshZotero();
@@ -128,18 +120,10 @@ class LibraryTabState extends State<LibraryTab> {
     setState(() => _importingKey = item.key);
     try {
       await widget.onImportZoteroItem!(item);
-      // Do NOT mark isLocal here — paper is only local after "Save to Obsidian".
-      // MainScreen tracks pending state via pendingZoteroItemKey.
-    } catch (_) {
-      // Errors are surfaced by MainScreen's progress log.
     } finally {
       if (mounted) setState(() => _importingKey = null);
     }
   }
-
-  // =========================================================================
-  // Build
-  // =========================================================================
 
   @override
   Widget build(BuildContext context) {
@@ -156,25 +140,26 @@ class LibraryTabState extends State<LibraryTab> {
 
   Widget _buildToggleHeader() {
     return Container(
-      color: Colors.grey.shade50,
-      padding: const EdgeInsets.fromLTRB(8, 6, 8, 0),
+      color: AppColors.surfaceLight,
+      padding: const EdgeInsets.fromLTRB(
+        AppSpacing.sm,
+        AppSpacing.sm,
+        AppSpacing.sm,
+        0,
+      ),
       child: Row(
         children: [
           _SectionTab(
             label: 'Local (${_localPapers.length})',
             icon: Icons.folder_outlined,
             selected: _activeSection == 0,
-            primaryColor: widget.primaryColor,
             onTap: () => setState(() => _activeSection = 0),
           ),
-          const SizedBox(width: 4),
+          const SizedBox(width: AppSpacing.xs),
           _SectionTab(
-            label: _isLoadingZotero
-                ? 'Zotero…'
-                : 'Zotero (${_zoteroItems.length})',
+            label: _isLoadingZotero ? 'Zotero…' : 'Zotero (${_zoteroItems.length})',
             icon: Icons.cloud_outlined,
             selected: _activeSection == 1,
-            primaryColor: widget.primaryColor,
             onTap: () => setState(() => _activeSection = 1),
           ),
         ],
@@ -182,26 +167,19 @@ class LibraryTabState extends State<LibraryTab> {
     );
   }
 
-  // ─── Local section ─────────────────────────────────────────────────────────
-
   Widget _buildLocalSection() {
+    final theme = Theme.of(context);
+
     if (_isLoadingLocal) {
-      return Center(
-          child: CircularProgressIndicator(color: widget.primaryColor));
+      return const Center(
+        child: CircularProgressIndicator(color: AppColors.primary),
+      );
     }
+
     if (_localPapers.isEmpty) {
-      return Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(Icons.folder_open, size: 48, color: Colors.grey.shade300),
-            const SizedBox(height: 12),
-            Text(
-              AppMessages.get(MessageKey.libraryEmpty),
-              style: TextStyle(color: Colors.grey.shade500),
-            ),
-          ],
-        ),
+      return AppEmptyState(
+        icon: Icons.folder_open,
+        title: AppMessages.get(MessageKey.libraryEmpty),
       );
     }
 
@@ -209,12 +187,12 @@ class LibraryTabState extends State<LibraryTab> {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Padding(
-          padding: const EdgeInsets.all(12.0),
+          padding: const EdgeInsets.all(AppSpacing.md),
           child: Row(
             children: [
               Text(
                 AppMessages.labelSavedNotesCount(_localPapers.length),
-                style: const TextStyle(fontWeight: FontWeight.bold),
+                style: theme.textTheme.titleLarge,
               ),
               const Spacer(),
               IconButton(
@@ -232,26 +210,24 @@ class LibraryTabState extends State<LibraryTab> {
             itemBuilder: (context, index) {
               final paper = _localPapers[index];
               return ListTile(
-                leading: CircleAvatar(
-                  backgroundColor:
-                      widget.primaryColor.withValues(alpha: 0.1),
-                  child: Icon(Icons.description,
-                      size: 16, color: widget.primaryColor),
+                leading: const CircleAvatar(
+                  backgroundColor: AppColors.surfaceNeutral,
+                  child: Icon(Icons.description, size: 16, color: AppColors.primary),
                 ),
                 title: Text(
                   paper['title']!,
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                      fontSize: 13, fontWeight: FontWeight.w500),
                 ),
-                subtitle: Text('Year: ${paper['year']}',
-                    style: TextStyle(
-                        fontSize: 11, color: Colors.grey.shade600)),
-                trailing: Icon(Icons.arrow_forward_ios,
-                    size: 12, color: Colors.grey.shade400),
+                subtitle: Text('Year: ${paper['year']}'),
+                trailing: const Icon(
+                  Icons.arrow_forward_ios,
+                  size: 12,
+                  color: AppColors.textMuted,
+                ),
                 onTap: () => widget.onOpenPaper(
-                    paper['dedup_key'] ?? paper['path'] ?? ''),
+                  paper['dedup_key'] ?? paper['path'] ?? '',
+                ),
               );
             },
           ),
@@ -260,33 +236,35 @@ class LibraryTabState extends State<LibraryTab> {
     );
   }
 
-  // ─── Zotero section ────────────────────────────────────────────────────────
-
   Widget _buildZoteroSection() {
+    final theme = Theme.of(context);
+
     if (_isLoadingZotero) {
-      return Center(
-          child: CircularProgressIndicator(color: widget.primaryColor));
+      return const Center(
+        child: CircularProgressIndicator(color: AppColors.primary),
+      );
     }
 
     if (_zoteroError != null) {
       return Center(
         child: Padding(
-          padding: const EdgeInsets.all(24.0),
+          padding: const EdgeInsets.all(AppSpacing.xxl),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(Icons.cloud_off, size: 40, color: Colors.red.shade300),
-              const SizedBox(height: 12),
-              Text('Failed to load Zotero collection',
-                  style: TextStyle(
-                      fontWeight: FontWeight.bold,
-                      color: Colors.red.shade700)),
-              const SizedBox(height: 6),
-              Text(_zoteroError!,
-                  style:
-                      TextStyle(fontSize: 12, color: Colors.grey.shade600),
-                  textAlign: TextAlign.center),
-              const SizedBox(height: 16),
+              const Icon(Icons.cloud_off, size: 40, color: AppColors.error),
+              const SizedBox(height: AppSpacing.md),
+              Text(
+                'Failed to load Zotero collection',
+                style: theme.textTheme.titleLarge?.copyWith(color: AppColors.error),
+              ),
+              const SizedBox(height: AppSpacing.sm),
+              Text(
+                _zoteroError!,
+                style: theme.textTheme.bodySmall,
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: AppSpacing.lg),
               OutlinedButton.icon(
                 onPressed: _refreshZotero,
                 icon: const Icon(Icons.refresh, size: 16),
@@ -299,56 +277,53 @@ class LibraryTabState extends State<LibraryTab> {
     }
 
     if (_zoteroItems.isEmpty) {
-      return Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(Icons.cloud_queue, size: 48, color: Colors.grey.shade300),
-            const SizedBox(height: 12),
-            Text('No papers in this Zotero collection.',
-                style: TextStyle(color: Colors.grey.shade500)),
-            const SizedBox(height: 12),
-            OutlinedButton.icon(
-              onPressed: _refreshZotero,
-              icon: const Icon(Icons.refresh, size: 16),
-              label: const Text('Refresh'),
-            ),
-          ],
-        ),
+      return Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          const AppEmptyState(
+            icon: Icons.cloud_queue,
+            title: 'No papers in this Zotero collection.',
+          ),
+          OutlinedButton.icon(
+            onPressed: _refreshZotero,
+            icon: const Icon(Icons.refresh, size: 16),
+            label: const Text('Refresh'),
+          ),
+        ],
       );
     }
 
     final filtered = _searchQuery.isEmpty
         ? _zoteroItems
-        : _zoteroItems.where((r) {
-            final q = _searchQuery.toLowerCase();
-            return r.item.title.toLowerCase().contains(q) ||
-                r.item.authors.toLowerCase().contains(q);
+        : _zoteroItems.where((record) {
+            final query = _searchQuery.toLowerCase();
+            return record.item.title.toLowerCase().contains(query) ||
+                record.item.authors.toLowerCase().contains(query);
           }).toList();
 
-    final notImported = _zoteroItems.where((r) => !r.isLocal).length;
+    final notImported = _zoteroItems.where((record) => !record.isLocal).length;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Padding(
-          padding: const EdgeInsets.fromLTRB(12, 8, 8, 4),
+          padding: const EdgeInsets.fromLTRB(
+            AppSpacing.md,
+            AppSpacing.sm,
+            AppSpacing.sm,
+            AppSpacing.xs,
+          ),
           child: Row(
             children: [
               Expanded(
                 child: TextField(
-                  decoration: InputDecoration(
+                  decoration: const InputDecoration(
                     hintText: 'Search papers…',
-                    prefixIcon: const Icon(Icons.search, size: 18),
+                    prefixIcon: Icon(Icons.search, size: 18),
                     isDense: true,
-                    contentPadding:
-                        const EdgeInsets.symmetric(vertical: 8),
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(8),
-                    ),
                   ),
-                  style: const TextStyle(fontSize: 13),
-                  onChanged: (v) => setState(() => _searchQuery = v),
+                  style: theme.textTheme.labelLarge,
+                  onChanged: (value) => setState(() => _searchQuery = value),
                 ),
               ),
               IconButton(
@@ -361,33 +336,31 @@ class LibraryTabState extends State<LibraryTab> {
         ),
         if (notImported > 0)
           Padding(
-            padding: const EdgeInsets.fromLTRB(12, 0, 12, 4),
+            padding: const EdgeInsets.fromLTRB(
+              AppSpacing.md,
+              0,
+              AppSpacing.md,
+              AppSpacing.xs,
+            ),
             child: Row(
               children: [
-                Text('$notImported not imported yet',
-                    style: TextStyle(
-                        fontSize: 11, color: Colors.grey.shade600)),
+                Text(
+                  '$notImported not imported yet',
+                  style: theme.textTheme.bodySmall,
+                ),
                 const Spacer(),
                 TextButton.icon(
                   onPressed: _importingKey != null
                       ? null
                       : () async {
-                          for (final r
-                              in List.of(_zoteroItems.where((r) => !r.isLocal))) {
+                          for (final record
+                              in List.of(_zoteroItems.where((item) => !item.isLocal))) {
                             if (!mounted) return;
-                            await _importItem(r.item);
+                            await _importItem(record.item);
                           }
                         },
-                  icon: const Icon(Icons.download_for_offline_outlined,
-                      size: 14),
-                  label: const Text('Import All',
-                      style: TextStyle(fontSize: 12)),
-                  style: TextButton.styleFrom(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 8, vertical: 0),
-                    minimumSize: Size.zero,
-                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                  ),
+                  icon: const Icon(Icons.download_for_offline_outlined, size: 14),
+                  label: const Text('Import All'),
                 ),
               ],
             ),
@@ -396,7 +369,7 @@ class LibraryTabState extends State<LibraryTab> {
         Expanded(
           child: ListView.builder(
             itemCount: filtered.length,
-            itemBuilder: (_, i) => _buildZoteroItem(filtered[i]),
+            itemBuilder: (_, index) => _buildZoteroItem(filtered[index]),
           ),
         ),
       ],
@@ -411,26 +384,24 @@ class LibraryTabState extends State<LibraryTab> {
 
     Widget trailing;
     if (isLocal) {
-      trailing = Chip(
-        label: const Text('Saved', style: TextStyle(fontSize: 10)),
-        backgroundColor: Colors.green.shade50,
-        side: BorderSide(color: Colors.green.shade200),
+      trailing = const Chip(
+        label: Text('Saved'),
+        backgroundColor: AppColors.successSurface,
+        side: BorderSide(color: AppColors.successSurface),
         padding: EdgeInsets.zero,
         visualDensity: VisualDensity.compact,
       );
     } else if (isImporting) {
-      trailing = SizedBox(
+      trailing = const SizedBox(
         width: 20,
         height: 20,
-        child: CircularProgressIndicator(
-            strokeWidth: 2, color: widget.primaryColor),
+        child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.primary),
       );
     } else if (isPending) {
-      trailing = Chip(
-        label: Text('Reviewing…',
-            style: TextStyle(fontSize: 10, color: Colors.orange.shade800)),
-        backgroundColor: Colors.orange.shade50,
-        side: BorderSide(color: Colors.orange.shade200),
+      trailing = const Chip(
+        label: Text('Reviewing…'),
+        backgroundColor: AppColors.warningSurface,
+        side: BorderSide(color: AppColors.warningSurface),
         padding: EdgeInsets.zero,
         visualDensity: VisualDensity.compact,
       );
@@ -438,80 +409,79 @@ class LibraryTabState extends State<LibraryTab> {
       trailing = Tooltip(
         message: 'Download & extract this paper',
         child: IconButton(
-          icon:
-              Icon(Icons.download_outlined, size: 18, color: widget.primaryColor),
+          icon: const Icon(Icons.download_outlined, size: 18, color: AppColors.primary),
           onPressed: () => _importItem(item),
         ),
       );
     }
 
+    final iconBackground = isLocal
+        ? AppColors.successSurface
+        : isPending
+        ? AppColors.warningSurface
+        : AppColors.surfaceNeutral;
+    final iconColor = isLocal
+        ? AppColors.success
+        : isPending
+        ? AppColors.warning
+        : AppColors.primary;
+
     return ListTile(
       leading: CircleAvatar(
-        backgroundColor: isLocal
-            ? Colors.green.shade50
-            : isPending
-                ? Colors.orange.shade50
-                : widget.primaryColor.withValues(alpha: 0.08),
+        backgroundColor: iconBackground,
         child: Icon(
           isLocal
               ? Icons.check
               : isPending
-                  ? Icons.edit_outlined
-                  : Icons.cloud_outlined,
+              ? Icons.edit_outlined
+              : Icons.cloud_outlined,
           size: 16,
-          color: isLocal
-              ? Colors.green.shade700
-              : isPending
-                  ? Colors.orange.shade700
-                  : widget.primaryColor,
+          color: iconColor,
         ),
       ),
-      title: Text(item.title,
-          maxLines: 2,
-          overflow: TextOverflow.ellipsis,
-          style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500)),
+      title: Text(item.title, maxLines: 2, overflow: TextOverflow.ellipsis),
       subtitle: Text(
         [item.authors, if (item.year != null) item.year!]
-            .where((s) => s.isNotEmpty)
+            .where((value) => value.isNotEmpty)
             .join(' · '),
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
-        style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
       ),
       trailing: trailing,
     );
   }
 }
 
-// ─── Toggle tab button ────────────────────────────────────────────────────────
-
 class _SectionTab extends StatelessWidget {
   const _SectionTab({
     required this.label,
     required this.icon,
     required this.selected,
-    required this.primaryColor,
     required this.onTap,
   });
 
   final String label;
   final IconData icon;
   final bool selected;
-  final Color primaryColor;
   final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
     return InkWell(
       onTap: onTap,
-      borderRadius: const BorderRadius.vertical(top: Radius.circular(6)),
+      borderRadius: BorderRadius.circular(AppRadius.sm),
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 150),
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+        padding: const EdgeInsets.symmetric(
+          horizontal: AppSpacing.md,
+          vertical: AppSpacing.sm,
+        ),
         decoration: BoxDecoration(
           border: Border(
             bottom: BorderSide(
-              color: selected ? primaryColor : Colors.transparent,
+              color: selected ? AppColors.primary : Colors.transparent,
               width: 2,
             ),
           ),
@@ -519,17 +489,16 @@ class _SectionTab extends StatelessWidget {
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(icon,
-                size: 14,
-                color: selected ? primaryColor : Colors.grey.shade500),
-            const SizedBox(width: 5),
+            Icon(
+              icon,
+              size: 14,
+              color: selected ? AppColors.primary : AppColors.textMuted,
+            ),
+            const SizedBox(width: AppSpacing.xs + 1),
             Text(
               label,
-              style: TextStyle(
-                fontSize: 12,
-                fontWeight:
-                    selected ? FontWeight.w600 : FontWeight.normal,
-                color: selected ? primaryColor : Colors.grey.shade600,
+              style: theme.textTheme.labelMedium?.copyWith(
+                color: selected ? AppColors.primary : AppColors.textSecondary,
               ),
             ),
           ],

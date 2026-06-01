@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
-import '../models/project.dart';
-import '../services/project_service.dart';
+import '../../models/project.dart';
+import '../../services/project_service.dart';
 
 class ManageProjectsDialog extends StatefulWidget {
   const ManageProjectsDialog({

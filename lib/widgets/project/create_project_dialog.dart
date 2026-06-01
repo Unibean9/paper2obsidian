@@ -3,10 +3,10 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:path/path.dart' as p;
 
-import '../models/project.dart';
-import '../services/project_service.dart';
-import '../utils/vault_access.dart';
-import '../utils/desktop_file_helper.dart';
+import '../../models/project.dart';
+import '../../services/project_service.dart';
+import '../../utils/vault_access.dart';
+import '../../utils/desktop_file_helper.dart';
 
 class CreateProjectDialog extends StatefulWidget {
   const CreateProjectDialog({super.key, this.onCreated});

@@ -1,30 +1,22 @@
 import 'package:flutter/material.dart';
 
+import '../../theme/app_colors.dart';
+import '../../theme/app_spacing.dart';
+import '../common/app_empty_state.dart';
+
 class CitationsTab extends StatelessWidget {
-  const CitationsTab({
-    super.key,
-    required this.citations,
-    required this.primaryColor,
-  });
+  const CitationsTab({super.key, required this.citations});
 
   final List<String> citations;
-  final Color primaryColor;
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
     if (citations.isEmpty) {
-      return Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(Icons.format_quote, size: 48, color: Colors.grey.shade300),
-            const SizedBox(height: 12),
-            Text(
-              'No citations extracted yet.',
-              style: TextStyle(color: Colors.grey.shade500),
-            ),
-          ],
-        ),
+      return const AppEmptyState(
+        icon: Icons.format_quote,
+        title: 'No citations extracted yet.',
       );
     }
 
@@ -32,10 +24,10 @@ class CitationsTab extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Padding(
-          padding: const EdgeInsets.all(12.0),
+          padding: const EdgeInsets.all(AppSpacing.md),
           child: Text(
             'Extracted Citations (${citations.length})',
-            style: const TextStyle(fontWeight: FontWeight.bold),
+            style: theme.textTheme.titleLarge,
           ),
         ),
         const Divider(height: 1),
@@ -45,24 +37,23 @@ class CitationsTab extends StatelessWidget {
             itemBuilder: (context, index) {
               return ListTile(
                 contentPadding: const EdgeInsets.symmetric(
-                  horizontal: 16,
-                  vertical: 4,
+                  horizontal: AppSpacing.lg,
+                  vertical: AppSpacing.xs,
                 ),
                 leading: CircleAvatar(
                   radius: 14,
-                  backgroundColor: primaryColor.withValues(alpha: 0.1),
+                  backgroundColor: AppColors.surfaceNeutral,
                   child: Text(
                     '${index + 1}',
-                    style: TextStyle(
-                      fontSize: 10,
-                      color: primaryColor,
-                      fontWeight: FontWeight.bold,
+                    style: theme.textTheme.labelSmall?.copyWith(
+                      color: AppColors.primary,
+                      fontWeight: FontWeight.w500,
                     ),
                   ),
                 ),
                 title: Text(
                   citations[index],
-                  style: const TextStyle(fontSize: 13, height: 1.4),
+                  style: theme.textTheme.labelLarge?.copyWith(height: 1.4),
                 ),
               );
             },

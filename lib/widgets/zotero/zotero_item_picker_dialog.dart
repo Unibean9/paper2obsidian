@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import '../models/zotero_item.dart';
+import '../../models/zotero_item.dart';
 
 class ZoteroItemPickerDialog extends StatefulWidget {
   const ZoteroItemPickerDialog({

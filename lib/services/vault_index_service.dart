@@ -381,8 +381,9 @@ class VaultIndexService {
     for (final line in body.split('\n')) {
       final m = headingRe.firstMatch(line);
       if (m != null) {
-        if (lines.isNotEmpty)
+        if (lines.isNotEmpty) {
           raw.add(_Section(heading, lines.join('\n').trim()));
+        }
         heading = m.group(1)!.trim();
         lines.clear();
       } else {

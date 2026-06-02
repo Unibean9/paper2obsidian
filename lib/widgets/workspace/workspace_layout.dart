@@ -142,8 +142,10 @@ class _WorkspaceLayoutState extends State<WorkspaceLayout> {
 
 
         final currentWidth = constraints.maxWidth;
-        final shouldCollapse = currentWidth < 1150;
-        if (shouldCollapse && (currentWidth < (_lastWidth ?? currentWidth) || _lastWidth == null)) {
+        final isCollapsedZone = currentWidth < 1150;
+        final wasExpandedZone = (_lastWidth ?? currentWidth) >= 1150;
+
+        if (isCollapsedZone && (wasExpandedZone || _lastWidth == null)) {
           WidgetsBinding.instance.addPostFrameCallback((_) {
             if (mounted) {
               if (!widget.isSidebarCollapsed) widget.onSidebarCollapseChanged(true);
@@ -167,7 +169,7 @@ class _WorkspaceLayoutState extends State<WorkspaceLayout> {
                 width: sidebarWidth,
                 decoration: const BoxDecoration(),
                 child: SizedBox(
-                  width: _sidebarWidth,
+                  width: sidebarWidth,
                   child: widget.workspaceSidebar,
                 ),
               ),
@@ -210,7 +212,7 @@ class _WorkspaceLayoutState extends State<WorkspaceLayout> {
                 width: chatWidth,
                 decoration: const BoxDecoration(),
                 child: SizedBox(
-                  width: _chatWidth,
+                  width: chatWidth,
                   child: widget.chatPanel,
                 ),
               ),

@@ -86,7 +86,7 @@ Widget _buildTextField(
             TextField(
               controller: controller,
               minLines: 1,
-              maxLines: maxLines,
+              maxLines: maxLines == 1 ? 1 : null,
               style: theme.textTheme.bodyLarge?.copyWith(
                 color: AppColors.textPrimary,
               ),

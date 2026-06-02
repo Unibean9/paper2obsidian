@@ -131,28 +131,57 @@ class _HoverProjectCardState extends State<HoverProjectCard> {
                 const Divider(height: 1),
                 const SizedBox(height: AppSpacing.md),
 
-                // Bottom Row: Clean Vault Path Link
-                Row(
+                // Bottom Row: Clean Vault Path Link + Zotero Collection Key Link
+                Column(
                   children: [
-                    Icon(
-                      Icons.link_outlined,
-                      size: 12,
-                      color: _isHovered ? AppColors.accent : AppColors.textMuted,
-                    ),
-                    const SizedBox(width: 6),
-                    Expanded(
-                      child: Text(
-                        widget.project.vaultPath.isNotEmpty
-                            ? widget.project.vaultPath
-                            : 'Vault path not configured',
-                        style: theme.textTheme.bodySmall?.copyWith(
-                          fontSize: 11,
-                          color: _isHovered ? AppColors.textPrimary : AppColors.textSecondary,
-                          fontWeight: FontWeight.w400,
+                    Row(
+                      children: [
+                        Icon(
+                          Icons.link_outlined,
+                          size: 12,
+                          color: _isHovered ? AppColors.accent : AppColors.textMuted,
                         ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
+                        const SizedBox(width: 6),
+                        Expanded(
+                          child: Text(
+                            widget.project.vaultPath.isNotEmpty
+                                ? widget.project.vaultPath
+                                : 'Vault path not configured',
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              fontSize: 11,
+                              color: _isHovered ? AppColors.textPrimary : AppColors.textSecondary,
+                              fontWeight: FontWeight.w400,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 4),
+                    Row(
+                      children: [
+                        Icon(
+                          Icons.sync,
+                          size: 12,
+                          color: _isHovered ? AppColors.accent : AppColors.textMuted,
+                        ),
+                        const SizedBox(width: 6),
+                        Expanded(
+                          child: Text(
+                            widget.project.zoteroCollectionKey != null && widget.project.zoteroCollectionKey!.isNotEmpty
+                                ? 'Zotero Key: ${widget.project.zoteroCollectionKey}'
+                                : 'Zotero collection not configured',
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              fontSize: 11,
+                              color: _isHovered ? AppColors.textPrimary : AppColors.textSecondary,
+                              fontWeight: FontWeight.w400,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      ],
                     ),
                   ],
                 ),

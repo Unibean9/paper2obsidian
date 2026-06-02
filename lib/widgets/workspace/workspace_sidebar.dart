@@ -7,10 +7,8 @@ import '../../models/paper_metadata.dart';
 import '../../models/zotero_item.dart';
 import '../../theme/app_colors.dart';
 import '../../theme/app_radius.dart';
-import '../../theme/app_shadows.dart';
 import '../../theme/app_spacing.dart';
 import '../common/panel_container.dart';
-import 'analysis_briefing_view.dart';
 import 'library_tab.dart';
 import 'sidebar_active_paper_box.dart';
 import 'sidebar_status_box.dart';
@@ -23,7 +21,6 @@ class WorkspaceSidebar extends StatelessWidget {
     required this.vaultPath,
     required this.isLoading,
     required this.paperStatus,
-    required this.paperCitations,
     required this.progressLogs,
     required this.statusText,
     required this.isZoteroConfigured,
@@ -32,15 +29,6 @@ class WorkspaceSidebar extends StatelessWidget {
     required this.pendingZoteroItemKey,
     required this.workspaceSection,
     required this.titleCtrl,
-    required this.authorsCtrl,
-    required this.venueCtrl,
-    required this.yearCtrl,
-    required this.doiCtrl,
-    required this.keywordsCtrl,
-    required this.datasetCtrl,
-    required this.problemCtrl,
-    required this.limitationCtrl,
-    required this.summaryCtrl,
     required this.libraryTabKey,
     required this.onDiscard,
     required this.onPickPdf,
@@ -63,7 +51,6 @@ class WorkspaceSidebar extends StatelessWidget {
   final String vaultPath;
   final bool isLoading;
   final PaperStatus paperStatus;
-  final List<String> paperCitations;
   final List<String> progressLogs;
   final String statusText;
   final bool isZoteroConfigured;
@@ -72,15 +59,6 @@ class WorkspaceSidebar extends StatelessWidget {
   final String? pendingZoteroItemKey;
   final int workspaceSection;
   final TextEditingController titleCtrl;
-  final TextEditingController authorsCtrl;
-  final TextEditingController venueCtrl;
-  final TextEditingController yearCtrl;
-  final TextEditingController doiCtrl;
-  final TextEditingController keywordsCtrl;
-  final TextEditingController datasetCtrl;
-  final TextEditingController problemCtrl;
-  final TextEditingController limitationCtrl;
-  final TextEditingController summaryCtrl;
   final GlobalKey<LibraryTabState> libraryTabKey;
   final VoidCallback onDiscard;
   final VoidCallback onPickPdf;
@@ -104,9 +82,6 @@ class WorkspaceSidebar extends StatelessWidget {
       return _buildMiniSidebar(context);
     }
     final theme = Theme.of(context);
-
-    // Map 2 (Library) to 0 (Sources) to fit the double tab layout
-    final activeTab = workspaceSection == 2 ? 0 : workspaceSection;
 
     return PanelContainer(
       padding: EdgeInsets.zero,
@@ -149,33 +124,12 @@ class WorkspaceSidebar extends StatelessWidget {
             ),
           ),
 
-          // Double Tab Switcher: Sources & Analysis
-          _buildNotebookLMTabBar(context, activeTab),
+          const SizedBox(height: AppSpacing.sm),
           const Divider(height: 1),
 
-          // Core Tab View Content
+          // Core Content
           Expanded(
-            child: AnimatedSwitcher(
-              duration: const Duration(milliseconds: 220),
-              switchInCurve: Curves.easeOutCubic,
-              switchOutCurve: Curves.easeInCubic,
-              layoutBuilder: (currentChild, previousChildren) {
-                return Stack(
-                  fit: StackFit.expand,
-                  children: [
-                    ...previousChildren,
-                    // ignore: use_null_aware_elements
-                    if (currentChild != null) currentChild,
-                  ],
-                );
-              },
-              child: KeyedSubtree(
-                key: ValueKey(activeTab),
-                child: activeTab == 0
-                    ? _buildSourcesTabContent(context)
-                    : _buildAnalysisTabContent(theme),
-              ),
-            ),
+            child: _buildSourcesTabContent(context),
           ),
 
           // Sticky status logs box if extracting or status loading
@@ -190,88 +144,6 @@ class WorkspaceSidebar extends StatelessWidget {
             ),
           ],
         ],
-      ),
-    );
-  }
-
-  // Modern pill-shaped tab bar matching Google NotebookLM layout
-  Widget _buildNotebookLMTabBar(BuildContext context, int activeTab) {
-    return Container(
-      margin: const EdgeInsets.symmetric(
-        horizontal: AppSpacing.lg,
-        vertical: AppSpacing.md,
-      ),
-      padding: const EdgeInsets.all(4),
-      decoration: BoxDecoration(
-        color: AppColors.surfaceNeutral,
-        borderRadius: BorderRadius.circular(AppRadius.md),
-      ),
-      child: Row(
-        children: [
-          Expanded(
-            child: _buildNotebookLMTabItem(
-              context: context,
-              index: 0,
-              label: 'Sources',
-              icon: Icons.source_outlined,
-              isSelected: activeTab == 0,
-            ),
-          ),
-          Expanded(
-            child: _buildNotebookLMTabItem(
-              context: context,
-              index: 1,
-              label: 'Analysis',
-              icon: Icons.auto_awesome_outlined,
-              isSelected: activeTab == 1,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildNotebookLMTabItem({
-    required BuildContext context,
-    required int index,
-    required String label,
-    required IconData icon,
-    required bool isSelected,
-  }) {
-    return GestureDetector(
-      onTap: () => onSectionChanged(index),
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 200),
-        curve: Curves.easeOutCubic,
-        padding: const EdgeInsets.symmetric(vertical: AppSpacing.sm + 1),
-        decoration: BoxDecoration(
-          color: isSelected ? AppColors.surfaceLight : Colors.transparent,
-          borderRadius: BorderRadius.circular(AppRadius.md - 2),
-          boxShadow: isSelected ? AppShadows.subtle : null,
-        ),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(
-              icon,
-              size: 14,
-              color: isSelected ? AppColors.accent : AppColors.textSecondary,
-            ),
-            const SizedBox(width: 8),
-            Flexible(
-              child: Text(
-                label,
-                style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                      color: isSelected ? AppColors.textPrimary : AppColors.textSecondary,
-                      fontWeight: isSelected ? FontWeight.w600 : FontWeight.w400,
-                      fontSize: 12,
-                    ),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
-            ),
-          ],
-        ),
       ),
     );
   }
@@ -470,68 +342,9 @@ class WorkspaceSidebar extends StatelessWidget {
   }
 
   // --- TAB 2: ANALYSIS TAB CONTENT ---
-  Widget _buildAnalysisTabContent(ThemeData theme) {
-    if (selectedPdf == null) {
-      return Center(
-        child: Padding(
-          padding: const EdgeInsets.all(AppSpacing.xxl),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Container(
-                padding: const EdgeInsets.all(AppSpacing.lg),
-                decoration: const BoxDecoration(
-                  color: AppColors.surfaceNeutral,
-                  shape: BoxShape.circle,
-                ),
-                child: const Icon(
-                  Icons.auto_awesome,
-                  size: 32,
-                  color: AppColors.accent,
-                ),
-              ),
-              const SizedBox(height: AppSpacing.lg),
-              Text(
-                'No source active',
-                style: theme.textTheme.titleMedium?.copyWith(
-                  fontWeight: FontWeight.bold,
-                  color: AppColors.textPrimary,
-                ),
-              ),
-              const SizedBox(height: AppSpacing.sm),
-              Text(
-                'Please upload a document or select a paper from the Library below to view the analysis summary.',
-                style: theme.textTheme.bodySmall?.copyWith(
-                  fontSize: 12,
-                  color: AppColors.textSecondary,
-                ),
-                textAlign: TextAlign.center,
-              ),
-            ],
-          ),
-        ),
-      );
-    }
-
-    return AnalysisBriefingView(
-      titleCtrl: titleCtrl,
-      authorsCtrl: authorsCtrl,
-      venueCtrl: venueCtrl,
-      yearCtrl: yearCtrl,
-      doiCtrl: doiCtrl,
-      keywordsCtrl: keywordsCtrl,
-      datasetCtrl: datasetCtrl,
-      problemCtrl: problemCtrl,
-      limitationCtrl: limitationCtrl,
-      summaryCtrl: summaryCtrl,
-      citations: paperCitations,
-    );
-  }
+  // (Analysis briefing view moved to Right Sidebar - AI Chat assistant panel)
 
   Widget _buildMiniSidebar(BuildContext context) {
-    // Map 2 (Library) to 0 (Sources) to fit the double tab layout
-    final activeTab = workspaceSection == 2 ? 0 : workspaceSection;
-
     return PanelContainer(
       padding: EdgeInsets.zero,
       child: Column(
@@ -556,7 +369,7 @@ class WorkspaceSidebar extends StatelessWidget {
             message: 'Sources',
             child: _buildMiniIconBtn(
               icon: Icons.source_outlined,
-              isSelected: activeTab == 0 && workspaceSection != 2,
+              isSelected: workspaceSection == 0,
               onTap: () {
                 onSectionChanged(0);
                 if (isCollapsed) {
@@ -567,23 +380,7 @@ class WorkspaceSidebar extends StatelessWidget {
           ),
           const SizedBox(height: AppSpacing.md),
 
-          // 2. Analysis Tab Icon
-          Tooltip(
-            message: 'Analysis',
-            child: _buildMiniIconBtn(
-              icon: Icons.auto_awesome_outlined,
-              isSelected: activeTab == 1,
-              onTap: () {
-                onSectionChanged(1);
-                if (isCollapsed) {
-                  onToggleCollapse();
-                }
-              },
-            ),
-          ),
-          const SizedBox(height: AppSpacing.md),
-
-          // 3. Library Tab Icon
+          // 2. Library Tab Icon
           Tooltip(
             message: 'Library',
             child: _buildMiniIconBtn(
@@ -601,7 +398,7 @@ class WorkspaceSidebar extends StatelessWidget {
           const Divider(height: 1, indent: 12, endIndent: 12),
           const SizedBox(height: AppSpacing.md),
 
-          // 4. Add Source Button
+          // 3. Add Source Button
           Tooltip(
             message: 'Add Source (PDF)',
             child: _buildMiniIconBtn(
@@ -612,7 +409,7 @@ class WorkspaceSidebar extends StatelessWidget {
           ),
           const SizedBox(height: AppSpacing.md),
 
-          // 5. Save Obsidian Button
+          // 4. Save Obsidian Button
           Tooltip(
             message: 'Save to Obsidian',
             child: _buildMiniIconBtn(
@@ -628,7 +425,7 @@ class WorkspaceSidebar extends StatelessWidget {
 
           const Spacer(),
 
-          // 6. Settings Button
+          // 5. Settings Button
           Tooltip(
             message: 'Settings',
             child: _buildMiniIconBtn(

@@ -55,7 +55,26 @@ class _ChatTabState extends State<ChatTab> with AutomaticKeepAliveClientMixin {
 
   List<String> _selectedPapers = [];
   List<String> _availablePapers = [];
-  String _outputLanguage = 'en';
+  String _outputLanguage = 'auto';
+
+  bool _isVietnamese(String text) {
+    final vietnameseRegex = RegExp(
+      r'[àáảãạăằắẳẵặâầấẩẫậèéẻẽẹêềếểễệìíỉĩịòóỏõọôồốổỗộơờớởỡợùúủũụưừứửữựỳýỷỹỵđÀÁẢÃẠĂẰẮẲẴẶÂẦẤẨẪẬÈÉẺẼẸÊỀẾỂỄỆÌÍỈĨỊÒÓỎÕỌÔỒỐỔỖỘƠỜỚỞỠỢÙÚỦŨỤƯỪỨỬỮỰỲÝỶỸỸĐ]',
+      caseSensitive: false,
+    );
+    if (vietnameseRegex.hasMatch(text)) return true;
+
+    // Detect common Vietnamese keyword queries without accent marks
+    final commonWords = [
+      ' gi ', 'gi?', ' la ', 'the nao', 'tai sao', 'tom tat', 'phan tich', 
+      'giup', 'cho toi', ' dich ', 'viet nam', 'ngon ngu', 'sao lai', 'lam the nao'
+    ];
+    final lowerText = ' ${text.toLowerCase()} ';
+    for (final word in commonWords) {
+      if (lowerText.contains(word)) return true;
+    }
+    return false;
+  }
 
   final LayerLink _layerLink = LayerLink();
   OverlayEntry? _overlayEntry;
@@ -68,7 +87,7 @@ class _ChatTabState extends State<ChatTab> with AutomaticKeepAliveClientMixin {
     SharedPreferences.getInstance().then((prefs) {
       if (!mounted) return;
       setState(() {
-        _outputLanguage = prefs.getString('chat_output_language') ?? 'en';
+        _outputLanguage = prefs.getString('chat_output_language') ?? 'auto';
       });
     });
   }
@@ -118,6 +137,12 @@ class _ChatTabState extends State<ChatTab> with AutomaticKeepAliveClientMixin {
     });
     widget.onMessagesChanged?.call(List.from(_messages));
     _scrollToBottom();
+
+    // Smart Bilingual: Detect if translation to Vietnamese is required
+    bool shouldTranslate = _outputLanguage == 'vi';
+    if (_outputLanguage == 'auto') {
+      shouldTranslate = _isVietnamese(text);
+    }
 
     try {
       final result = await widget.vaultIndexService.query(
@@ -202,7 +227,7 @@ class _ChatTabState extends State<ChatTab> with AutomaticKeepAliveClientMixin {
       }
 
       String? translatedContent;
-      if (_outputLanguage == 'vi') {
+      if (shouldTranslate) {
         try {
           final translationPrompt = 
               'You are an expert academic translator specializing in computer science and scientific papers.\n'
@@ -229,7 +254,7 @@ class _ChatTabState extends State<ChatTab> with AutomaticKeepAliveClientMixin {
         response,
         sources: sourcesList,
         translatedContent: translatedContent,
-        showTranslation: _outputLanguage == 'vi',
+        showTranslation: shouldTranslate,
       );
     } catch (e) {
       _addAssistantMessage('Error: $e');
@@ -922,110 +947,6 @@ class _ChatTabState extends State<ChatTab> with AutomaticKeepAliveClientMixin {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        // AI Chat Header with Trash Icon and Language Selector
-        Container(
-          padding: const EdgeInsets.symmetric(
-            horizontal: AppSpacing.lg,
-            vertical: AppSpacing.sm + 2,
-          ),
-          decoration: const BoxDecoration(
-            color: AppColors.surfaceLight,
-            border: Border(
-              bottom: BorderSide(color: AppColors.border, width: 1),
-            ),
-          ),
-          child: Row(
-            children: [
-              const Icon(Icons.chat_bubble_outline, size: 18, color: AppColors.textSecondary),
-              const SizedBox(width: AppSpacing.sm),
-              Text(
-                'AI Chat',
-                style: theme.textTheme.labelLarge?.copyWith(
-                  fontWeight: FontWeight.w600,
-                  color: AppColors.textPrimary,
-                ),
-              ),
-              const Spacer(),
-              Tooltip(
-                message: 'Clear conversation',
-                child: GestureDetector(
-                  onTap: (_isLoading || _messages.isEmpty) ? null : _clearChat,
-                  child: MouseRegion(
-                    cursor: (_isLoading || _messages.isEmpty)
-                        ? SystemMouseCursors.basic
-                        : SystemMouseCursors.click,
-                    child: Icon(
-                      Icons.delete,
-                      size: 18,
-                      color: (_isLoading || _messages.isEmpty)
-                          ? AppColors.textMuted
-                          : AppColors.textSecondary,
-                    ),
-                  ),
-                ),
-              ),
-              const SizedBox(width: AppSpacing.lg),
-              PopupMenuButton<String>(
-                tooltip: 'Select response language',
-                padding: EdgeInsets.zero,
-                onSelected: _setOutputLanguage,
-                child: MouseRegion(
-                  cursor: SystemMouseCursors.click,
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const Icon(
-                        Icons.language_rounded,
-                        size: 18,
-                        color: AppColors.textSecondary,
-                      ),
-                      const SizedBox(width: 4),
-                      Text(
-                        _outputLanguage.toLowerCase(),
-                        style: theme.textTheme.labelMedium?.copyWith(
-                          fontWeight: FontWeight.w600,
-                          color: AppColors.textSecondary,
-                        ),
-                      ),
-                      const Icon(
-                        Icons.arrow_drop_down_rounded,
-                        size: 16,
-                        color: AppColors.textSecondary,
-                      ),
-                    ],
-                  ),
-                ),
-                itemBuilder: (context) => [
-                  PopupMenuItem(
-                    value: 'en',
-                    child: Text('English (en)', style: theme.textTheme.bodyMedium),
-                  ),
-                  PopupMenuItem(
-                    value: 'vi',
-                    child: Text('Tiếng Việt (vi)', style: theme.textTheme.bodyMedium),
-                  ),
-                ],
-              ),
-              if (widget.onToggleCollapse != null) ...[
-                const SizedBox(width: AppSpacing.lg),
-                Tooltip(
-                  message: 'Collapse chat',
-                  child: GestureDetector(
-                    onTap: widget.onToggleCollapse,
-                    child: const MouseRegion(
-                      cursor: SystemMouseCursors.click,
-                      child: Icon(
-                        Icons.keyboard_double_arrow_right,
-                        size: 18,
-                        color: AppColors.textSecondary,
-                      ),
-                    ),
-                  ),
-                ),
-              ],
-            ],
-          ),
-        ),
         if (widget.showStaleBanner)
           _StaleBanner(
             isRebuilding: _isRebuilding,
@@ -1302,6 +1223,79 @@ class _ChatTabState extends State<ChatTab> with AutomaticKeepAliveClientMixin {
                         _buildPlusNChip(context, _selectedPapers.length - 2),
                     ],
                     const Spacer(),
+                    // Language Selector Dropdown
+                    PopupMenuButton<String>(
+                      tooltip: 'Select response language',
+                      padding: EdgeInsets.zero,
+                      onSelected: _setOutputLanguage,
+                      child: MouseRegion(
+                        cursor: SystemMouseCursors.click,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+                          decoration: BoxDecoration(
+                            color: AppColors.surfaceNeutral,
+                            borderRadius: BorderRadius.circular(AppRadius.sm),
+                            border: Border.all(color: AppColors.border),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Icon(Icons.language_rounded, size: 13, color: AppColors.textSecondary),
+                              const SizedBox(width: 4),
+                              Text(
+                                _outputLanguage.toUpperCase(),
+                                style: theme.textTheme.labelSmall?.copyWith(
+                                  fontWeight: FontWeight.bold,
+                                  color: AppColors.textSecondary,
+                                ),
+                              ),
+                              const Icon(Icons.arrow_drop_down_rounded, size: 14, color: AppColors.textMuted),
+                            ],
+                          ),
+                        ),
+                      ),
+                      itemBuilder: (context) => [
+                        PopupMenuItem(
+                          value: 'auto',
+                          child: Text('Auto Detect (AUTO)', style: theme.textTheme.bodyMedium),
+                        ),
+                        PopupMenuItem(
+                          value: 'en',
+                          child: Text('English (EN)', style: theme.textTheme.bodyMedium),
+                        ),
+                        PopupMenuItem(
+                          value: 'vi',
+                          child: Text('Tiếng Việt (VI)', style: theme.textTheme.bodyMedium),
+                        ),
+                      ],
+                    ),
+                    // Clear Chat Button
+                    if (_messages.isNotEmpty) ...[
+                      const SizedBox(width: AppSpacing.sm),
+                      Tooltip(
+                        message: 'Clear conversation',
+                        child: GestureDetector(
+                          onTap: _isLoading ? null : _clearChat,
+                          child: MouseRegion(
+                            cursor: _isLoading ? SystemMouseCursors.basic : SystemMouseCursors.click,
+                            child: Container(
+                              padding: const EdgeInsets.all(5),
+                              decoration: BoxDecoration(
+                                color: AppColors.surfaceNeutral,
+                                borderRadius: BorderRadius.circular(AppRadius.sm),
+                                border: Border.all(color: AppColors.border),
+                              ),
+                              child: const Icon(
+                                Icons.delete_outline_rounded,
+                                size: 14,
+                                color: AppColors.textSecondary,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                    const SizedBox(width: AppSpacing.sm),
                     GestureDetector(
                       onTap: _isLoading ? null : _handleSend,
                       child: AnimatedContainer(

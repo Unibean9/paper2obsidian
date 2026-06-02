@@ -19,6 +19,8 @@ import '../services/paper_repository.dart';
 import '../services/project_service.dart';
 import '../services/vault_index_service.dart';
 import '../theme/app_colors.dart';
+import '../theme/app_radius.dart';
+import '../theme/app_shadows.dart';
 import '../theme/app_spacing.dart';
 import '../utils/desktop_file_helper.dart';
 import '../utils/vault_access.dart';
@@ -27,11 +29,13 @@ import '../widgets/project/main_home_view.dart';
 import '../widgets/workspace/pdf_viewer_panel.dart';
 import '../widgets/project/create_project_dialog.dart';
 import '../widgets/settings/settings_dialog.dart';
+import '../widgets/zotero/link_zotero_collection_dialog.dart';
 import '../widgets/zotero/zotero_item_picker_dialog.dart';
 import '../widgets/workspace/workspace_sidebar.dart';
 import '../widgets/workspace/workspace_layout.dart';
 import '../widgets/workspace/workspace_header.dart';
 import '../widgets/workspace/library_tab.dart';
+import '../widgets/workspace/analysis_briefing_view.dart';
 import '../widgets/common/panel_container.dart';
 import '../widgets/common/animated_dialog.dart';
 
@@ -75,6 +79,7 @@ class _MainScreenState extends State<MainScreen> {
   int _indexRevision = 0;
   String _paperAbstract = '';
   int _workspaceSection = 0;
+  int _chatSection = 0; // 0 for AI Chat, 1 for Analysis
   bool _showHome = true;
 
   final _titleCtrl = TextEditingController();
@@ -244,9 +249,7 @@ class _MainScreenState extends State<MainScreen> {
 
   Future<void> _saveSettings() async {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(AppMessages.get(MessageKey.statusSettingsSaved))),
-    );
+    _showUserMessage(AppMessages.get(MessageKey.statusSettingsSaved));
   }
 
   /// Updates the active project's vault path (or creates a default project if
@@ -274,10 +277,55 @@ class _MainScreenState extends State<MainScreen> {
   void _showUserMessage(String message, {bool isError = false}) {
     if (!mounted) return;
     setState(() => statusText = message);
+    ScaffoldMessenger.of(context).hideCurrentSnackBar();
+
+    final screenWidth = MediaQuery.of(context).size.width;
+    const toastWidth = 200.0;
+    final sideMargin = (screenWidth - toastWidth) / 2;
+
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text(message),
-        backgroundColor: isError ? AppColors.error : null,
+        behavior: SnackBarBehavior.floating,
+        margin: EdgeInsets.only(
+          bottom: MediaQuery.of(context).size.height - 90,
+          left: sideMargin,
+          right: sideMargin,
+        ),
+        content: Text(
+          message,
+          textAlign: TextAlign.center,
+          style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
+        ),
+        backgroundColor: isError ? AppColors.error : AppColors.primary,
+        duration: const Duration(seconds: 2),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(AppRadius.md),
+          side: BorderSide(color: isError ? AppColors.error : AppColors.border.withValues(alpha: 0.5)),
+        ),
+      ),
+    );
+  }
+
+  void _openLinkZoteroCollectionDialog() {
+    final project = _activeProject ?? ProjectService.instance.activeProject;
+    if (project == null) return;
+
+    showAnimatedDialog(
+      context: context,
+      child: LinkZoteroCollectionDialog(
+        project: project,
+        onLink: (collectionKey) async {
+          final updated = project.copyWith(
+            zoteroCollectionKey: collectionKey.isEmpty ? null : collectionKey,
+          );
+          await ProjectService.instance.updateProject(updated);
+          if (mounted) {
+            setState(() {
+              _activeProject = updated;
+            });
+            _showUserMessage('Zotero collection updated!');
+          }
+        },
       ),
     );
   }
@@ -299,7 +347,7 @@ class _MainScreenState extends State<MainScreen> {
         AppMessages.get(MessageKey.errorSetVaultPath),
         isError: true,
       );
-      _showSettingsDialog(context);
+      _openSettings(context);
       return false;
     }
     final bool vaultExists;
@@ -348,11 +396,12 @@ class _MainScreenState extends State<MainScreen> {
     return false;
   }
 
-  void _showSettingsDialog(BuildContext context) {
+  void _openSettings(BuildContext context) {
     showAnimatedDialog(
       context: context,
       child: SettingsDialog(
         initialVaultPath: vaultPath,
+        onBackHome: _openHome,
         onSave: (newPath) async {
           await _applyVaultPath(newPath);
           await _saveSettings();
@@ -626,12 +675,7 @@ class _MainScreenState extends State<MainScreen> {
         error: e,
       );
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Vault re-index failed: $e'),
-            backgroundColor: AppColors.error,
-          ),
-        );
+        _showUserMessage('Vault re-index failed: $e', isError: true);
       }
     }
   }
@@ -840,8 +884,8 @@ class _MainScreenState extends State<MainScreen> {
             activeCollectionKey: _activeCollectionKey,
             isLoading: isLoading,
             onNewProject: _showCreateProjectDialog,
-            onZotero: _importFromZotero,
-            onSettings: () => _showSettingsDialog(context),
+            onZotero: _openLinkZoteroCollectionDialog,
+            onSettings: () => _openSettings(context),
           ),
         ],
       ),
@@ -902,7 +946,6 @@ class _MainScreenState extends State<MainScreen> {
         vaultPath: vaultPath,
         isLoading: isLoading,
         paperStatus: _paperStatus,
-        paperCitations: paperCitations,
         progressLogs: progressLogs,
         statusText: statusText,
         isZoteroConfigured: _isZoteroConfigured,
@@ -911,15 +954,6 @@ class _MainScreenState extends State<MainScreen> {
         pendingZoteroItemKey: _pendingZoteroItemKey,
         workspaceSection: _workspaceSection,
         titleCtrl: _titleCtrl,
-        authorsCtrl: _authorsCtrl,
-        venueCtrl: _venueCtrl,
-        yearCtrl: _yearCtrl,
-        doiCtrl: _doiCtrl,
-        keywordsCtrl: _keywordsCtrl,
-        datasetCtrl: _datasetCtrl,
-        problemCtrl: _problemCtrl,
-        limitationCtrl: _limitationCtrl,
-        summaryCtrl: _summaryCtrl,
         libraryTabKey: _libraryTabKey,
         onDiscard: _discardPaper,
         onPickPdf: _pickPdf,
@@ -938,7 +972,7 @@ class _MainScreenState extends State<MainScreen> {
         },
         isCollapsed: _isSidebarCollapsed,
         onToggleCollapse: () => setState(() => _isSidebarCollapsed = !_isSidebarCollapsed),
-        onSettings: () => _showSettingsDialog(context),
+        onSettings: () => _openSettings(context),
         onCancel: _handleCancel,
       ),
       pdfPanel: PdfViewerPanel(selectedPdf: selectedPdf),
@@ -946,20 +980,310 @@ class _MainScreenState extends State<MainScreen> {
     );
   }
 
+  Widget _buildRightTabBar(BuildContext context, int activeTab) {
+    return Container(
+      margin: const EdgeInsets.symmetric(
+        horizontal: AppSpacing.lg,
+        vertical: AppSpacing.md,
+      ),
+      padding: const EdgeInsets.all(4),
+      decoration: BoxDecoration(
+        color: AppColors.surfaceNeutral,
+        borderRadius: BorderRadius.circular(AppRadius.md),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: _buildRightTabItem(
+              context: context,
+              index: 0,
+              label: 'AI Chat',
+              icon: Icons.chat_bubble_outline,
+              isSelected: activeTab == 0,
+            ),
+          ),
+          Expanded(
+            child: _buildRightTabItem(
+              context: context,
+              index: 1,
+              label: 'Analysis',
+              icon: Icons.auto_awesome_outlined,
+              isSelected: activeTab == 1,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildRightTabItem({
+    required BuildContext context,
+    required int index,
+    required String label,
+    required IconData icon,
+    required bool isSelected,
+  }) {
+    return GestureDetector(
+      onTap: () {
+        setState(() => _chatSection = index);
+      },
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
+        curve: Curves.easeOutCubic,
+        padding: const EdgeInsets.symmetric(vertical: AppSpacing.sm + 1),
+        decoration: BoxDecoration(
+          color: isSelected ? AppColors.surfaceLight : Colors.transparent,
+          borderRadius: BorderRadius.circular(AppRadius.md - 2),
+          boxShadow: isSelected ? AppShadows.subtle : null,
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              icon,
+              size: 14,
+              color: isSelected ? AppColors.accent : AppColors.textSecondary,
+            ),
+            const SizedBox(width: 8),
+            Flexible(
+              child: Text(
+                label,
+                style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                      color: isSelected ? AppColors.textPrimary : AppColors.textSecondary,
+                      fontWeight: isSelected ? FontWeight.w600 : FontWeight.w400,
+                      fontSize: 12,
+                    ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildRightMiniIconBtn({
+    required IconData icon,
+    required VoidCallback? onTap,
+    bool isSelected = false,
+    Color? color,
+  }) {
+    final baseColor = color ?? (isSelected ? AppColors.accent : AppColors.textSecondary);
+    return MouseRegion(
+      cursor: onTap != null ? SystemMouseCursors.click : SystemMouseCursors.basic,
+      child: GestureDetector(
+        onTap: onTap,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 200),
+          curve: Curves.easeOutCubic,
+          padding: const EdgeInsets.all(AppSpacing.md),
+          decoration: BoxDecoration(
+            color: isSelected ? AppColors.surfaceLight : Colors.transparent,
+            borderRadius: BorderRadius.circular(AppRadius.sm),
+            border: Border.all(
+              color: isSelected ? AppColors.border : Colors.transparent,
+              width: 1,
+            ),
+          ),
+          child: Icon(
+            icon,
+            size: 20,
+            color: onTap == null ? AppColors.border : baseColor,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildAnalysisTabContent(ThemeData theme) {
+    if (selectedPdf == null) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(AppSpacing.xxl),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                padding: const EdgeInsets.all(AppSpacing.lg),
+                decoration: const BoxDecoration(
+                  color: AppColors.surfaceNeutral,
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(
+                  Icons.auto_awesome,
+                  size: 32,
+                  color: AppColors.accent,
+                ),
+              ),
+              const SizedBox(height: AppSpacing.lg),
+              Text(
+                'No source active',
+                style: theme.textTheme.titleMedium?.copyWith(
+                  fontWeight: FontWeight.bold,
+                  color: AppColors.textPrimary,
+                ),
+              ),
+              const SizedBox(height: AppSpacing.sm),
+              Text(
+                'Please upload a document or select a paper from the Library to view the analysis summary.',
+                style: theme.textTheme.bodySmall?.copyWith(
+                  fontSize: 12,
+                  color: AppColors.textSecondary,
+                ),
+                textAlign: TextAlign.center,
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    return AnalysisBriefingView(
+      titleCtrl: _titleCtrl,
+      authorsCtrl: _authorsCtrl,
+      venueCtrl: _venueCtrl,
+      yearCtrl: _yearCtrl,
+      doiCtrl: _doiCtrl,
+      keywordsCtrl: _keywordsCtrl,
+      datasetCtrl: _datasetCtrl,
+      problemCtrl: _problemCtrl,
+      limitationCtrl: _limitationCtrl,
+      summaryCtrl: _summaryCtrl,
+      citations: paperCitations,
+    );
+  }
+
   Widget _buildChatPanel() {
+    final theme = Theme.of(context);
+    
+    if (_isChatCollapsed) {
+      return PanelContainer(
+        padding: EdgeInsets.zero,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            const SizedBox(height: AppSpacing.md),
+            // Expand button
+            Tooltip(
+              message: 'Expand Assistant',
+              child: _buildRightMiniIconBtn(
+                icon: Icons.keyboard_double_arrow_left,
+                onTap: () => setState(() => _isChatCollapsed = false),
+                color: AppColors.textSecondary,
+              ),
+            ),
+            const SizedBox(height: AppSpacing.sm),
+            const Divider(height: 1, indent: 12, endIndent: 12),
+            const SizedBox(height: AppSpacing.md),
+
+            // AI Chat Tab Icon
+            Tooltip(
+              message: 'AI Chat',
+              child: _buildRightMiniIconBtn(
+                icon: Icons.chat_bubble_outline,
+                isSelected: _chatSection == 0,
+                onTap: () {
+                  setState(() {
+                    _chatSection = 0;
+                    _isChatCollapsed = false;
+                  });
+                },
+              ),
+            ),
+            const SizedBox(height: AppSpacing.md),
+
+            // Analysis Tab Icon
+            Tooltip(
+              message: 'Analysis',
+              child: _buildRightMiniIconBtn(
+                icon: Icons.auto_awesome_outlined,
+                isSelected: _chatSection == 1,
+                onTap: () {
+                  setState(() {
+                    _chatSection = 1;
+                    _isChatCollapsed = false;
+                  });
+                },
+              ),
+            ),
+            const SizedBox(height: AppSpacing.md),
+          ],
+        ),
+      );
+    }
+
     return PanelContainer(
       padding: EdgeInsets.zero,
-      child: ChatTab(
-        vaultIndexService: _vaultIndexService,
-        bedrockClient: _bedrockClient,
-        showStaleBanner: _indexStale && !_bannerDismissed,
-        onRebuildIndex: _rebuildIndex,
-        onDismissBanner: () => setState(() => _bannerDismissed = true),
-        initialMessages: List.from(_chatHistory[_globalChatKey] ?? []),
-        onMessagesChanged: _onChatMessagesChanged,
-        indexRevision: _indexRevision,
-        isCollapsed: _isChatCollapsed,
-        onToggleCollapse: () => setState(() => _isChatCollapsed = !_isChatCollapsed),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          // Header with collapse button
+          Padding(
+            padding: const EdgeInsets.fromLTRB(
+              AppSpacing.lg,
+              AppSpacing.lg,
+              AppSpacing.lg,
+              AppSpacing.xs,
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  'ASSISTANT',
+                  style: theme.textTheme.titleSmall?.copyWith(
+                    fontWeight: FontWeight.bold,
+                    letterSpacing: 2.0,
+                  ),
+                ),
+                Tooltip(
+                  message: 'Collapse panel',
+                  child: GestureDetector(
+                    onTap: () => setState(() => _isChatCollapsed = true),
+                    child: const MouseRegion(
+                      cursor: SystemMouseCursors.click,
+                      child: Icon(
+                        Icons.keyboard_double_arrow_right,
+                        size: 18,
+                        color: AppColors.textSecondary,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+
+          // Double Tab Switcher
+          _buildRightTabBar(context, _chatSection),
+          const Divider(height: 1),
+
+          // Tab Content
+          Expanded(
+            child: AnimatedSwitcher(
+              duration: const Duration(milliseconds: 220),
+              switchInCurve: Curves.easeOutCubic,
+              switchOutCurve: Curves.easeInCubic,
+              child: KeyedSubtree(
+                key: ValueKey(_chatSection),
+                child: _chatSection == 0
+                    ? ChatTab(
+                        vaultIndexService: _vaultIndexService,
+                        bedrockClient: _bedrockClient,
+                        showStaleBanner: _indexStale && !_bannerDismissed,
+                        onRebuildIndex: _rebuildIndex,
+                        onDismissBanner: () => setState(() => _bannerDismissed = true),
+                        initialMessages: List.from(_chatHistory[_globalChatKey] ?? []),
+                        onMessagesChanged: _onChatMessagesChanged,
+                        indexRevision: _indexRevision,
+                        isCollapsed: false,
+                        onToggleCollapse: null,
+                      )
+                    : _buildAnalysisTabContent(theme),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }

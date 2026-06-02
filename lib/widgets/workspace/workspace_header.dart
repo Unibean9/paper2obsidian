@@ -265,7 +265,7 @@ class WorkspaceHeaderActions extends StatelessWidget {
         zoteroLabel = isCompact ? 'Zotero' : 'Zotero (No Collection)';
         zoteroColor = AppColors.warning;
         zoteroBg = AppColors.warningSurface.withValues(alpha: 0.4);
-        zoteroPress = onSettings; // Clicking opens settings to link collection
+        zoteroPress = onZotero; // Clicking opens project-specific key linking dialog
       } else {
         // State 3: Fully configured, linked, and ready
         zoteroIcon = Icons.cloud_done_outlined;

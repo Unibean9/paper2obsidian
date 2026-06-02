@@ -81,24 +81,16 @@ class AppMessages {
     MessageKey.statusReady: 'Ready',
     MessageKey.statusSavedToObsidian: 'Saved to Obsidian!',
     MessageKey.statusSettingsSaved: 'Saved settings!',
-    MessageKey.statusCancelled:
-        'Extraction stopped. You can select another file.',
+    MessageKey.statusCancelled: 'Extraction cancelled.',
 
     // Errors
     MessageKey.errorSelectPdfFirst: 'Select a PDF first.',
-    MessageKey.errorSetVaultPath:
-        'Set your Obsidian vault in Settings → Browse (required on macOS).',
-    MessageKey.errorVaultAccessFailed:
-        'Cannot access vault path. Use Settings → Browse to select the folder.',
-    MessageKey.errorVaultNotFound:
-        'Vault folder not found. Use Settings → Browse to select it again.',
-    MessageKey.errorMacosVaultBlocked:
-        'macOS blocked vault access. Please select the vault folder again.',
-    MessageKey.errorVaultWriteDenied:
-        'Cannot write to vault. On macOS you must use Browse in Settings'
-        ' — typing the path is not enough.',
-    MessageKey.errorPdfReadFailed:
-        'Could not read the selected PDF. Try another file.',
+    MessageKey.errorSetVaultPath: 'Please configure your Obsidian Vault path in Settings.',
+    MessageKey.errorVaultAccessFailed: 'Failed to access Obsidian Vault path.',
+    MessageKey.errorVaultNotFound: 'Obsidian Vault folder not found.',
+    MessageKey.errorMacosVaultBlocked: 'Vault access blocked by system.',
+    MessageKey.errorVaultWriteDenied: 'Write permission denied for Obsidian Vault.',
+    MessageKey.errorPdfReadFailed: 'Could not read the selected PDF.',
 
     // Chat
     MessageKey.chatInitialGreeting:

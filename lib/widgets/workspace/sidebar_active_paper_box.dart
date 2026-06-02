@@ -85,7 +85,7 @@ class SidebarActivePaperBox extends StatelessWidget {
                 ),
               ),
               const SizedBox(width: 4),
-              // Nút thay đổi paper nhanh
+              // Quick paper change button
               InkWell(
                 onTap: isLoading ? null : onChange,
                 child: Text(

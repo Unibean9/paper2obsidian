@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:path/path.dart' as p;
 
 import '../../models/project.dart';
@@ -25,12 +26,20 @@ class _CreateProjectDialogState extends State<CreateProjectDialog> {
   String? _nameError;
   String? _vaultError;
   bool _isSaving = false;
+  late final ScrollController _scrollController;
+
+  @override
+  void initState() {
+    super.initState();
+    _scrollController = ScrollController();
+  }
 
   @override
   void dispose() {
     _nameCtrl.dispose();
     _vaultCtrl.dispose();
     _collectionKeyCtrl.dispose();
+    _scrollController.dispose();
     super.dispose();
   }
 
@@ -89,77 +98,94 @@ class _CreateProjectDialogState extends State<CreateProjectDialog> {
 
   @override
   Widget build(BuildContext context) {
-    return AlertDialog(
-      title: const Text(
-        'New Project',
-        style: TextStyle(fontWeight: FontWeight.bold),
-      ),
-      content: SizedBox(
-        width: 440,
-        child: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              TextField(
-                controller: _nameCtrl,
-                autofocus: true,
-                decoration: InputDecoration(
-                  labelText: 'Project Name',
-                  prefixIcon: const Icon(Icons.folder_special_outlined),
-                  errorText: _nameError,
+    return CallbackShortcuts(
+      bindings: {
+        const SingleActivator(LogicalKeyboardKey.escape): () {
+          Navigator.pop(context);
+        },
+        const SingleActivator(LogicalKeyboardKey.enter): () {
+          if (!_isSaving) _onSave();
+        },
+      },
+      child: AlertDialog(
+        title: const Text(
+          'New Project',
+          style: TextStyle(fontWeight: FontWeight.bold),
+        ),
+        content: SizedBox(
+          width: 440,
+          child: Scrollbar(
+            controller: _scrollController,
+            thumbVisibility: true,
+            child: SingleChildScrollView(
+              controller: _scrollController,
+              child: Padding(
+                padding: const EdgeInsets.only(right: 12),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    TextField(
+                      controller: _nameCtrl,
+                      autofocus: true,
+                      decoration: InputDecoration(
+                        labelText: 'Project Name',
+                        prefixIcon: const Icon(Icons.folder_special_outlined),
+                        errorText: _nameError,
+                      ),
+                      textInputAction: TextInputAction.next,
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: _vaultCtrl,
+                      readOnly: VaultAccess.requiresPickerGrant,
+                      decoration: InputDecoration(
+                        labelText: 'Obsidian Vault Path',
+                        prefixIcon: const Icon(Icons.folder_outlined),
+                        errorText: _vaultError,
+                        suffixIcon: isDesktopPickerSupported
+                            ? IconButton(
+                                tooltip: 'Browse',
+                                icon: const Icon(Icons.folder_open),
+                                onPressed: _browse,
+                              )
+                            : null,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    const Divider(),
+                    const SizedBox(height: 4),
+                    TextField(
+                      controller: _collectionKeyCtrl,
+                      decoration: const InputDecoration(
+                        labelText: 'Zotero Collection Key (optional)',
+                        prefixIcon: Icon(Icons.link_outlined),
+                        helperText: 'e.g. ABCD1234 — find it in the Zotero URL',
+                      ),
+                    ),
+                  ],
                 ),
-                textInputAction: TextInputAction.next,
               ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: _vaultCtrl,
-                readOnly: VaultAccess.requiresPickerGrant,
-                decoration: InputDecoration(
-                  labelText: 'Obsidian Vault Path',
-                  prefixIcon: const Icon(Icons.folder_outlined),
-                  errorText: _vaultError,
-                  suffixIcon: isDesktopPickerSupported
-                      ? IconButton(
-                          tooltip: 'Browse',
-                          icon: const Icon(Icons.folder_open),
-                          onPressed: _browse,
-                        )
-                      : null,
-                ),
-              ),
-              const SizedBox(height: 12),
-              const Divider(),
-              const SizedBox(height: 4),
-              TextField(
-                controller: _collectionKeyCtrl,
-                decoration: const InputDecoration(
-                  labelText: 'Zotero Collection Key (optional)',
-                  prefixIcon: Icon(Icons.link_outlined),
-                  helperText: 'e.g. ABCD1234 — find it in the Zotero URL',
-                ),
-              ),
-            ],
+            ),
           ),
         ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: _isSaving ? null : _onSave,
+            child: _isSaving
+                ? const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Text('Create'),
+          ),
+        ],
       ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(context),
-          child: const Text('Cancel'),
-        ),
-        FilledButton(
-          onPressed: _isSaving ? null : _onSave,
-          child: _isSaving
-              ? const SizedBox(
-                  width: 16,
-                  height: 16,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                )
-              : const Text('Create'),
-        ),
-      ],
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
     );
   }
 }

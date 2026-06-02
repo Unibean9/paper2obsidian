@@ -53,7 +53,9 @@ class WorkspaceSidebar extends StatelessWidget {
     required this.loadZoteroCollection,
     required this.onImportZoteroItem,
     required this.onSectionChanged,
-    required this.onCollapse,
+    required this.isCollapsed,
+    required this.onToggleCollapse,
+    required this.onSettings,
     required this.onCancel,
   });
 
@@ -91,11 +93,16 @@ class WorkspaceSidebar extends StatelessWidget {
   final Future<List<({ZoteroItem item, bool isLocal})>> Function(String collectionKey)? loadZoteroCollection;
   final Future<void> Function(ZoteroItem item)? onImportZoteroItem;
   final ValueChanged<int> onSectionChanged;
-  final VoidCallback onCollapse;
+  final bool isCollapsed;
+  final VoidCallback onToggleCollapse;
+  final VoidCallback onSettings;
   final VoidCallback onCancel;
 
   @override
   Widget build(BuildContext context) {
+    if (isCollapsed) {
+      return _buildMiniSidebar(context);
+    }
     final theme = Theme.of(context);
 
     // Map 2 (Library) to 0 (Sources) to fit the double tab layout
@@ -127,7 +134,7 @@ class WorkspaceSidebar extends StatelessWidget {
                 Tooltip(
                   message: 'Collapse workspace',
                   child: GestureDetector(
-                    onTap: onCollapse,
+                    onTap: onToggleCollapse,
                     child: const MouseRegion(
                       cursor: SystemMouseCursors.click,
                       child: Icon(
@@ -152,6 +159,16 @@ class WorkspaceSidebar extends StatelessWidget {
               duration: const Duration(milliseconds: 220),
               switchInCurve: Curves.easeOutCubic,
               switchOutCurve: Curves.easeInCubic,
+              layoutBuilder: (currentChild, previousChildren) {
+                return Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    ...previousChildren,
+                    // ignore: use_null_aware_elements
+                    if (currentChild != null) currentChild,
+                  ],
+                );
+              },
               child: KeyedSubtree(
                 key: ValueKey(activeTab),
                 child: activeTab == 0
@@ -241,13 +258,17 @@ class WorkspaceSidebar extends StatelessWidget {
               color: isSelected ? AppColors.accent : AppColors.textSecondary,
             ),
             const SizedBox(width: 8),
-            Text(
-              label,
-              style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                    color: isSelected ? AppColors.textPrimary : AppColors.textSecondary,
-                    fontWeight: isSelected ? FontWeight.w600 : FontWeight.w400,
-                    fontSize: 12,
-                  ),
+            Flexible(
+              child: Text(
+                label,
+                style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                      color: isSelected ? AppColors.textPrimary : AppColors.textSecondary,
+                      fontWeight: isSelected ? FontWeight.w600 : FontWeight.w400,
+                      fontSize: 12,
+                    ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
             ),
           ],
         ),
@@ -411,7 +432,12 @@ class WorkspaceSidebar extends StatelessWidget {
         ? FilledButton.icon(
             onPressed: onPressed,
             icon: Icon(icon, size: 14),
-            label: Text(label, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600)),
+            label: Text(
+              label,
+              style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
             style: FilledButton.styleFrom(
               padding: const EdgeInsets.symmetric(vertical: AppSpacing.md),
               backgroundColor: AppColors.accent,
@@ -424,7 +450,12 @@ class WorkspaceSidebar extends StatelessWidget {
         : OutlinedButton.icon(
             onPressed: onPressed,
             icon: Icon(icon, size: 14),
-            label: Text(label, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600)),
+            label: Text(
+              label,
+              style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
             style: OutlinedButton.styleFrom(
               padding: const EdgeInsets.symmetric(vertical: AppSpacing.md),
               foregroundColor: AppColors.accent,
@@ -494,6 +525,154 @@ class WorkspaceSidebar extends StatelessWidget {
       limitationCtrl: limitationCtrl,
       summaryCtrl: summaryCtrl,
       citations: paperCitations,
+    );
+  }
+
+  Widget _buildMiniSidebar(BuildContext context) {
+    // Map 2 (Library) to 0 (Sources) to fit the double tab layout
+    final activeTab = workspaceSection == 2 ? 0 : workspaceSection;
+
+    return PanelContainer(
+      padding: EdgeInsets.zero,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          const SizedBox(height: AppSpacing.md),
+          // Toggle button (keyboard_double_arrow_right)
+          Tooltip(
+            message: 'Expand Workspace',
+            child: _buildMiniIconBtn(
+              icon: Icons.keyboard_double_arrow_right,
+              onTap: onToggleCollapse,
+              color: AppColors.textSecondary,
+            ),
+          ),
+          const SizedBox(height: AppSpacing.sm),
+          const Divider(height: 1, indent: 12, endIndent: 12),
+          const SizedBox(height: AppSpacing.md),
+
+          // 1. Sources Tab Icon
+          Tooltip(
+            message: 'Sources',
+            child: _buildMiniIconBtn(
+              icon: Icons.source_outlined,
+              isSelected: activeTab == 0 && workspaceSection != 2,
+              onTap: () {
+                onSectionChanged(0);
+                if (isCollapsed) {
+                  onToggleCollapse();
+                }
+              },
+            ),
+          ),
+          const SizedBox(height: AppSpacing.md),
+
+          // 2. Analysis Tab Icon
+          Tooltip(
+            message: 'Analysis',
+            child: _buildMiniIconBtn(
+              icon: Icons.auto_awesome_outlined,
+              isSelected: activeTab == 1,
+              onTap: () {
+                onSectionChanged(1);
+                if (isCollapsed) {
+                  onToggleCollapse();
+                }
+              },
+            ),
+          ),
+          const SizedBox(height: AppSpacing.md),
+
+          // 3. Library Tab Icon
+          Tooltip(
+            message: 'Library',
+            child: _buildMiniIconBtn(
+              icon: Icons.library_books_outlined,
+              isSelected: workspaceSection == 2,
+              onTap: () {
+                onSectionChanged(2);
+                if (isCollapsed) {
+                  onToggleCollapse();
+                }
+              },
+            ),
+          ),
+          const SizedBox(height: AppSpacing.md),
+          const Divider(height: 1, indent: 12, endIndent: 12),
+          const SizedBox(height: AppSpacing.md),
+
+          // 4. Add Source Button
+          Tooltip(
+            message: 'Add Source (PDF)',
+            child: _buildMiniIconBtn(
+              icon: Icons.add_box_outlined,
+              onTap: isLoading ? null : onPickPdf,
+              color: AppColors.accent,
+            ),
+          ),
+          const SizedBox(height: AppSpacing.md),
+
+          // 5. Save Obsidian Button
+          Tooltip(
+            message: 'Save to Obsidian',
+            child: _buildMiniIconBtn(
+              icon: Icons.save_alt_outlined,
+              onTap: paperStatus == PaperStatus.done &&
+                      !isLoading &&
+                      vaultPath.trim().isNotEmpty
+                  ? onSave
+                  : null,
+              isSelected: paperStatus == PaperStatus.done,
+            ),
+          ),
+
+          const Spacer(),
+
+          // 6. Settings Button
+          Tooltip(
+            message: 'Settings',
+            child: _buildMiniIconBtn(
+              icon: Icons.settings_outlined,
+              onTap: onSettings,
+              color: AppColors.textSecondary,
+            ),
+          ),
+          const SizedBox(height: AppSpacing.md),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMiniIconBtn({
+    required IconData icon,
+    required VoidCallback? onTap,
+    bool isSelected = false,
+    Color? color,
+  }) {
+    final baseColor = color ?? (isSelected ? AppColors.accent : AppColors.textSecondary);
+    return MouseRegion(
+      cursor: onTap != null ? SystemMouseCursors.click : SystemMouseCursors.basic,
+      child: GestureDetector(
+        onTap: onTap,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 200),
+          curve: Curves.easeOutCubic,
+          padding: const EdgeInsets.all(AppSpacing.md),
+          decoration: BoxDecoration(
+            color: isSelected ? AppColors.surfaceLight : Colors.transparent,
+            borderRadius: BorderRadius.circular(AppRadius.sm),
+            border: Border.all(
+              color: isSelected ? AppColors.border : Colors.transparent,
+              width: 1,
+            ),
+          ),
+          child: Icon(
+            icon,
+            size: 20,
+            color: onTap == null ? AppColors.border : baseColor,
+          ),
+        ),
+      ),
     );
   }
 }

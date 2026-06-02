@@ -936,7 +936,9 @@ class _MainScreenState extends State<MainScreen> {
         onSectionChanged: (index) {
           setState(() => _workspaceSection = index);
         },
-        onCollapse: () => setState(() => _isSidebarCollapsed = true),
+        isCollapsed: _isSidebarCollapsed,
+        onToggleCollapse: () => setState(() => _isSidebarCollapsed = !_isSidebarCollapsed),
+        onSettings: () => _showSettingsDialog(context),
         onCancel: _handleCancel,
       ),
       pdfPanel: PdfViewerPanel(selectedPdf: selectedPdf),
@@ -956,7 +958,8 @@ class _MainScreenState extends State<MainScreen> {
         initialMessages: List.from(_chatHistory[_globalChatKey] ?? []),
         onMessagesChanged: _onChatMessagesChanged,
         indexRevision: _indexRevision,
-        onCollapse: () => setState(() => _isChatCollapsed = true),
+        isCollapsed: _isChatCollapsed,
+        onToggleCollapse: () => setState(() => _isChatCollapsed = !_isChatCollapsed),
       ),
     );
   }

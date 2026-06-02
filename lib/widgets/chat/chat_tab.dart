@@ -22,7 +22,8 @@ class ChatTab extends StatefulWidget {
     this.onMessagesChanged,
     this.onCitationsUpdated,
     this.indexRevision = 0,
-    this.onCollapse,
+    required this.isCollapsed,
+    this.onToggleCollapse,
   });
 
   final VaultIndexService vaultIndexService;
@@ -35,7 +36,8 @@ class ChatTab extends StatefulWidget {
   final void Function(List<Map<String, dynamic>> messages)? onMessagesChanged;
   final void Function(List<String> citations)? onCitationsUpdated;
   final int indexRevision;
-  final VoidCallback? onCollapse;
+  final bool isCollapsed;
+  final VoidCallback? onToggleCollapse;
 
   @override
   State<ChatTab> createState() => _ChatTabState();
@@ -219,7 +221,7 @@ class _ChatTabState extends State<ChatTab> with AutomaticKeepAliveClientMixin {
           );
           translatedContent = translatedContent.trim();
         } catch (e) {
-          translatedContent = '⚠️ Tự động dịch lỗi: $e';
+          translatedContent = '⚠️ Auto-translation error: $e';
         }
       }
 
@@ -543,7 +545,7 @@ class _ChatTabState extends State<ChatTab> with AutomaticKeepAliveClientMixin {
       if (mounted) {
         setState(() {
           msg['is_translating'] = false;
-          msg['translated_content'] = '⚠️ Lỗi dịch thuật: $e';
+          msg['translated_content'] = '⚠️ Translation error: $e';
         });
       }
     }
@@ -572,7 +574,7 @@ class _ChatTabState extends State<ChatTab> with AutomaticKeepAliveClientMixin {
             ),
             const SizedBox(width: 6),
             Text(
-              'Đang dịch...',
+              'Translating...',
               style: theme.textTheme.bodySmall?.copyWith(
                 fontSize: 11,
                 color: AppColors.accent,
@@ -599,7 +601,7 @@ class _ChatTabState extends State<ChatTab> with AutomaticKeepAliveClientMixin {
                     ),
                     const SizedBox(width: 4),
                     Text(
-                      showTranslation ? 'Xem bản gốc (EN)' : 'Xem bản dịch (VI)',
+                      showTranslation ? 'Show original (EN)' : 'Show translation (VI)',
                       style: theme.textTheme.bodySmall?.copyWith(
                         fontSize: 11,
                         color: AppColors.accent,
@@ -625,7 +627,7 @@ class _ChatTabState extends State<ChatTab> with AutomaticKeepAliveClientMixin {
                     ),
                     const SizedBox(width: 4),
                     Text(
-                      'Dịch sang Tiếng Việt',
+                      'Translate to Vietnamese',
                       style: theme.textTheme.bodySmall?.copyWith(
                         fontSize: 11,
                         color: AppColors.textSecondary,
@@ -913,6 +915,9 @@ class _ChatTabState extends State<ChatTab> with AutomaticKeepAliveClientMixin {
   @override
   Widget build(BuildContext context) {
     super.build(context);
+    if (widget.isCollapsed) {
+      return _buildMiniChatTab(context);
+    }
     final theme = Theme.of(context);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1001,12 +1006,12 @@ class _ChatTabState extends State<ChatTab> with AutomaticKeepAliveClientMixin {
                   ),
                 ],
               ),
-              if (widget.onCollapse != null) ...[
+              if (widget.onToggleCollapse != null) ...[
                 const SizedBox(width: AppSpacing.lg),
                 Tooltip(
-                  message: 'Thu gọn chat',
+                  message: 'Collapse chat',
                   child: GestureDetector(
-                    onTap: widget.onCollapse,
+                    onTap: widget.onToggleCollapse,
                     child: const MouseRegion(
                       cursor: SystemMouseCursors.click,
                       child: Icon(
@@ -1307,7 +1312,7 @@ class _ChatTabState extends State<ChatTab> with AutomaticKeepAliveClientMixin {
                           shape: BoxShape.circle,
                         ),
                         child: const Icon(
-                          Icons.send_rounded,
+                          Icons.arrow_upward_rounded,
                           color: AppColors.textInverse,
                           size: 15,
                         ),
@@ -1320,6 +1325,92 @@ class _ChatTabState extends State<ChatTab> with AutomaticKeepAliveClientMixin {
           ),
         ),
       ],
+    );
+  }
+
+  Widget _buildMiniChatTab(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        const SizedBox(height: AppSpacing.md),
+        // 1. Toggle button (keyboard_double_arrow_left to expand)
+        Tooltip(
+          message: 'Expand AI Chat',
+          child: _buildMiniIconBtn(
+            icon: Icons.keyboard_double_arrow_left,
+            onTap: widget.onToggleCollapse,
+            color: AppColors.textSecondary,
+          ),
+        ),
+        const SizedBox(height: AppSpacing.sm),
+        const Divider(height: 1, indent: 12, endIndent: 12),
+        const SizedBox(height: AppSpacing.md),
+
+        // 2. Chat Bubble Icon (opens chat panel)
+        Tooltip(
+          message: 'AI Chat',
+          child: _buildMiniIconBtn(
+            icon: Icons.chat_bubble_outline,
+            isSelected: true,
+            onTap: widget.onToggleCollapse,
+          ),
+        ),
+        const SizedBox(height: AppSpacing.md),
+
+        // 3. Clear Chat Button
+        Tooltip(
+          message: 'Clear conversation',
+          child: _buildMiniIconBtn(
+            icon: Icons.delete_outline,
+            onTap: _messages.isEmpty ? null : _clearChat,
+            color: AppColors.textSecondary,
+          ),
+        ),
+        const SizedBox(height: AppSpacing.md),
+
+        // 4. Rebuild Index Button
+        Tooltip(
+          message: 'Rebuild Vault Index',
+          child: _buildMiniIconBtn(
+            icon: _isRebuilding ? Icons.sync : Icons.refresh,
+            onTap: _handleRebuild,
+            color: _isRebuilding ? AppColors.accent : AppColors.textSecondary,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildMiniIconBtn({
+    required IconData icon,
+    required VoidCallback? onTap,
+    bool isSelected = false,
+    Color? color,
+  }) {
+    final baseColor = color ?? (isSelected ? AppColors.accent : AppColors.textSecondary);
+    return MouseRegion(
+      cursor: onTap != null ? SystemMouseCursors.click : SystemMouseCursors.basic,
+      child: GestureDetector(
+        onTap: onTap,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 200),
+          curve: Curves.easeOutCubic,
+          padding: const EdgeInsets.all(AppSpacing.md),
+          decoration: BoxDecoration(
+            color: isSelected ? AppColors.surfaceLight : Colors.transparent,
+            borderRadius: BorderRadius.circular(AppRadius.sm),
+            border: Border.all(
+              color: isSelected ? AppColors.border : Colors.transparent,
+              width: 1,
+            ),
+          ),
+          child: Icon(
+            icon,
+            size: 20,
+            color: onTap == null ? AppColors.border : baseColor,
+          ),
+        ),
+      ),
     );
   }
 }

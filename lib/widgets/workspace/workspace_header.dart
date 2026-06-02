@@ -218,15 +218,18 @@ class WorkspaceHeaderActions extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final screenWidth = MediaQuery.of(context).size.width;
+    final isCompact = screenWidth < 1000;
+
     final actions = <Widget>[
       // New project button with premium capsule styling
       OutlinedButton.icon(
         onPressed: onNewProject,
         icon: const Icon(Icons.add, size: 15),
-        label: const Text('New Project'),
+        label: Text(isCompact ? 'New' : 'New Project'),
         style: OutlinedButton.styleFrom(
-          padding: const EdgeInsets.symmetric(
-            horizontal: AppSpacing.lg,
+          padding: EdgeInsets.symmetric(
+            horizontal: isCompact ? AppSpacing.md : AppSpacing.lg,
             vertical: AppSpacing.md,
           ),
           foregroundColor: AppColors.textPrimary,
@@ -252,21 +255,21 @@ class WorkspaceHeaderActions extends StatelessWidget {
       if (!isZoteroConfigured) {
         // State 1: Unconfigured API
         zoteroIcon = Icons.cloud_off_outlined;
-        zoteroLabel = 'Zotero (No API)';
+        zoteroLabel = isCompact ? 'Zotero' : 'Zotero (No API)';
         zoteroColor = AppColors.textMuted;
         zoteroBg = null;
         zoteroPress = onSettings; // Clicking opens settings to configure
       } else if (activeCollectionKey == null) {
         // State 2: Configured globally but no collection linked to this project
         zoteroIcon = Icons.sync_problem_outlined;
-        zoteroLabel = 'Zotero (No Collection)';
+        zoteroLabel = isCompact ? 'Zotero' : 'Zotero (No Collection)';
         zoteroColor = AppColors.warning;
         zoteroBg = AppColors.warningSurface.withValues(alpha: 0.4);
         zoteroPress = onSettings; // Clicking opens settings to link collection
       } else {
         // State 3: Fully configured, linked, and ready
         zoteroIcon = Icons.cloud_done_outlined;
-        zoteroLabel = 'Zotero Active';
+        zoteroLabel = isCompact ? 'Zotero' : 'Zotero Active';
         zoteroColor = AppColors.success;
         zoteroBg = AppColors.successSurface.withValues(alpha: 0.4);
         zoteroPress = isLoading ? null : onZotero;
@@ -291,7 +294,7 @@ class WorkspaceHeaderActions extends StatelessWidget {
                   fontWeight: FontWeight.w600,
                 ),
               ),
-              if (zoteroReady) ...[
+              if (zoteroReady && !isCompact) ...[
                 const SizedBox(width: 6),
                 Container(
                   width: 6,
@@ -305,8 +308,8 @@ class WorkspaceHeaderActions extends StatelessWidget {
             ],
           ),
           style: OutlinedButton.styleFrom(
-            padding: const EdgeInsets.symmetric(
-              horizontal: AppSpacing.lg,
+            padding: EdgeInsets.symmetric(
+              horizontal: isCompact ? AppSpacing.md : AppSpacing.lg,
               vertical: AppSpacing.md,
             ),
             backgroundColor: zoteroBg,
@@ -330,8 +333,8 @@ class WorkspaceHeaderActions extends StatelessWidget {
         icon: const Icon(Icons.settings_outlined, size: 16),
         label: const Text('Settings'),
         style: FilledButton.styleFrom(
-          padding: const EdgeInsets.symmetric(
-            horizontal: AppSpacing.lg,
+          padding: EdgeInsets.symmetric(
+            horizontal: isCompact ? AppSpacing.md : AppSpacing.lg,
             vertical: AppSpacing.md,
           ),
           backgroundColor: AppColors.accent,
